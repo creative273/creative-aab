@@ -1,0 +1,42 @@
+name: Rilis widget
+
+# Jalan tiap ada perubahan di widget/ pada branch main. Kalau versi di package.json
+# sudah pernah dirilis, langkah build dilewati.
+on:
+  push:
+    branches: [main]
+    paths: ["widget/**", ".github/workflows/release.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: widget
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: widget/package-lock.json
+      - name: Cek versi sudah dirilis atau belum
+        id: ver
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="v$(node -p "require('./package.json').version")"
+          echo "tag=$V" >> "$GITHUB_OUTPUT"
+          if gh release view "$V" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "baru=0" >> "$GITHUB_OUTPUT"; else echo "baru=1" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.ver.outputs.baru == '1'
+        run: npm ci
+      - name: Bangun installer dan rilis
+        if: steps.ver.outputs.baru == '1'
+        run: npx electron-builder --win nsis --x64 --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
