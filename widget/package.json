@@ -60,7 +60,7 @@
         "provider": "github",
         "owner": "creative273",
         "repo": "creative-aab",
-        "releaseType": "release"
+        "releaseType": "draft"
       }
     ]
   }

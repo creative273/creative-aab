@@ -1,7 +1,7 @@
 name: Rilis widget
 
 # Jalan tiap ada perubahan di widget/ pada branch main. Kalau versi di package.json
-# sudah pernah dirilis, langkah build dilewati.
+# sudah dirilis lengkap, build dilewati.
 on:
   push:
     branches: [main]
@@ -17,6 +17,9 @@ jobs:
     defaults:
       run:
         working-directory: widget
+        shell: bash
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -26,29 +29,35 @@ jobs:
           cache-dependency-path: widget/package-lock.json
       - name: Cek versi sudah dirilis atau belum
         id: ver
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           V="v$(node -p "require('./package.json').version")"
           echo "tag=$V" >> "$GITHUB_OUTPUT"
-          if gh release view "$V" -R "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx latest.yml; then
-            echo "baru=0" >> "$GITHUB_OUTPUT"
-          else
-            # Rilis belum ada, atau ada tapi tidak lengkap (tanpa latest.yml): bersihkan lalu bangun ulang.
-            gh release delete "$V" -R "$GITHUB_REPOSITORY" --cleanup-tag -y 2>/dev/null || true
-            echo "baru=1" >> "$GITHUB_OUTPUT"
+          IDS=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name==\"$V\") | .id")
+          N=$(echo "$IDS" | grep -c . || true)
+          OK=0
+          if [ "$N" = "1" ]; then
+            A=$(gh api "repos/$GITHUB_REPOSITORY/releases/$IDS" --jq '[.draft, (.assets|map(.name)|join(","))] | @tsv')
+            case "$A" in false*latest.yml*) case "$A" in *.blockmap*) OK=1;; esac;; esac
           fi
+          if [ "$OK" = "1" ]; then echo "baru=0" >> "$GITHUB_OUTPUT"; exit 0; fi
+          # Belum ada, ganda, atau tidak lengkap: hapus semua lalu bangun ulang.
+          for id in $IDS; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"; done
+          git push origin ":refs/tags/$V" 2>/dev/null || true
+          echo "baru=1" >> "$GITHUB_OUTPUT"
       - if: steps.ver.outputs.baru == '1'
         run: npm ci
-      - name: Buat tag versi
+      - name: Buat tag dan draft rilis
         if: steps.ver.outputs.baru == '1'
-        shell: bash
         run: |
-          git tag -f "${{ steps.ver.outputs.tag }}"
-          git push -f origin "${{ steps.ver.outputs.tag }}"
-      - name: Bangun installer dan rilis
+          V="${{ steps.ver.outputs.tag }}"
+          git tag -f "$V" && git push -f origin "$V"
+          gh release create "$V" --draft --verify-tag --title "$V" --notes "Creative AAB $V. Unduh Creative-AAB-Setup-*.exe untuk pasang baru. Laptop yang sudah terpasang update sendiri."
+      - name: Bangun installer dan unggah
         if: steps.ver.outputs.baru == '1'
         run: npx electron-builder --win nsis --x64 --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Terbitkan rilis
+        if: steps.ver.outputs.baru == '1'
+        run: |
+          V="${{ steps.ver.outputs.tag }}"
+          gh release view "$V" --json assets --jq '.assets[].name'
+          gh release edit "$V" --draft=false --latest
