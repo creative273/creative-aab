@@ -85,6 +85,10 @@ globalThis.fetch = async (url, opts = {}) => {
   }
   if (u.host === "slides.googleapis.com") {
     if (!u.pathname.includes(EP_ID)) return new Response(JSON.stringify({ error: { message: "forbidden" } }), { status: 403 });
+    if (u.pathname.includes("/pages/") && u.pathname.endsWith("/thumbnail")) {
+      assert.equal(u.searchParams.get("thumbnailProperties.thumbnailSize"), "LARGE");
+      return ok({ contentUrl: `https://lh3.googleusercontent.com/thumb-${u.pathname.split("/")[5]}`, width: 1600, height: 900 });
+    }
     if (u.pathname.endsWith(":batchUpdate")) {
       const { requests } = JSON.parse(opts.body);
       slideUpdates.push(requests);
@@ -124,8 +128,7 @@ assert.deepEqual(parsed.map((x) => [x.id, x.account, x.cover, x.date, x.posted, 
 ]);
 assert.equal(parsed[0].format, "REELS");
 assert.equal(parsed[0].reference, "https://www.instagram.com/p/Dcs1g0bvRp2/");
-assert.ok(parsed[0].body.includes("Sebutkan 1 kata"));
-assert.ok(!parsed[0].body.includes("POSTED"));
+assert.equal(parsed[0].body, undefined, "isi teks tidak disimpan lagi, diganti screenshot");
 
 // Akun
 const login = async (u, p) => (await call("POST", "/api/login", { username: u, password: p })).data.token;
@@ -233,6 +236,37 @@ r = await call("POST", "/api/ep/posted", { id: "s_modal" }, ZAHRA);
 assert.equal(r.data.stamped, false);
 assert.equal(slideUpdates.length, n);
 
+// Satu request /api/state berisi EP dan kalender sesuai akses
+r = await call("GET", "/api/state", null, ZAHRA);
+assert.equal(r.data.ep.items.length, 4);
+assert.ok(r.data.cal.rows.length > 0);
+r = await call("GET", "/api/state", null, AQIL);
+assert.ok(r.data.ep, "Aqil dapat EP");
+assert.equal(r.data.cal, undefined, "Aqil tidak dapat kalender");
+// Screenshot slide
+r = await call("GET", "/api/ep/thumb?id=s_modal", null, AQIL);
+assert.equal(r.status, 200, JSON.stringify(r.data));
+assert.equal(r.data.url, "https://lh3.googleusercontent.com/thumb-s_modal");
+assert.equal((await call("GET", "/api/ep/thumb?id=ngawur", null, AQIL)).status, 404);
+// Refresh: hanya Ray, Google paling sering sekali per menit
+assert.equal((await call("POST", "/api/refresh", {}, ZAHRA)).status, 403);
+let g0 = calls.filter((c) => c.includes("googleapis")).length;
+r = await call("POST", "/api/refresh", {}, RAY);
+assert.equal(r.status, 200, JSON.stringify(r.data));
+assert.ok(r.data.ep && r.data.cal);
+const g1 = calls.filter((c) => c.includes("googleapis")).length;
+assert.ok(g1 > g0, "refresh pertama memanggil Google");
+for (let i = 0; i < 5; i++) await call("POST", "/api/refresh", {}, RAY);
+assert.equal(calls.filter((c) => c.includes("googleapis")).length, g1, "klik beruntun tidak memanggil Google lagi");
+// Cache tidak ditulis ulang kalau isinya sama
+let puts = 0;
+const origPut = env.STORE.put;
+env.STORE.put = async (k, v, o) => { if (k === "epcache" || k === "calcache") puts++; return origPut(k, v, o); };
+await worker.scheduled({}, env, { waitUntil: (p) => p });
+await new Promise((res) => setTimeout(res, 50));
+assert.equal(puts, 0, "data sama: cache EP dan kalender tidak ditulis ulang");
+env.STORE.put = origPut;
+
 // Dashboard
 r = await call("GET", "/api/dashboard", null, RAY);
 assert.equal(r.status, 200);
@@ -259,7 +293,7 @@ assert.ok(calls.slice(before).some((c) => c.includes("slides.googleapis.com")));
 // GOOGLE_SA kosong: pesan jelas
 const env2 = { ...env, GOOGLE_SA: "" };
 kv.delete("google:token"); kv.delete("epcache");
-const res2 = await worker.fetch(new Request("https://x.dev/api/ep/refresh", { method: "POST", headers: { Authorization: `Bearer ${ZAHRA}` } }), env2, {});
+const res2 = await worker.fetch(new Request("https://x.dev/api/ep", { headers: { Authorization: `Bearer ${ZAHRA}` } }), env2, {});
 assert.equal(res2.status, 409);
 assert.match((await res2.json()).error, /GOOGLE_SA/);
 

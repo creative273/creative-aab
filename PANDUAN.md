@@ -117,7 +117,7 @@ Widget membaca dan menulis Content Calendar (Google Sheets) dan EP (Google Slide
 
 ## Alur EP dan Content Calendar (versi 1.2)
 
-- **Tab EP** (semua akun): daftar konten dari Google Slides EP bulan ini, per akun AAB atau NUSANTARA, dengan filter Minggu ini, Menunggu, Revisi, Semua. Klik satu konten untuk melihat isi slide atau membukanya di Slides.
+- **Tab EP** (semua akun): daftar konten dari Google Slides EP bulan ini, per akun AAB atau NUSANTARA, dengan filter Minggu ini, Menunggu, Revisi, Semua. Klik satu konten untuk melihat **screenshot slide utuh** (termasuk reference dan desain). Klik gambarnya untuk memperbesar, Esc untuk menutup.
 - **Approval EP pindah ke widget.** Ray membuka konten lalu klik **OKE**, atau **Revisi** dengan catatan. Tim langsung melihat statusnya dan mendapat pop-up. Komentar di Slides tidak dipakai lagi untuk approval. Isi EP tetap ditulis di Slides.
 - **POSTED** (Zahra atau Ray): buka konten di tab EP → isi link post → pilih baris Content Calendar (sudah dipilihkan otomatis kalau tanggal dan judulnya cocok) → **Tandai POSTED**. Widget menempel stempel POSTED di slide dengan gaya yang sama seperti stempel yang sudah ada, mencentang POSTING, dan mengisi Link Post di kalender. Stempel POSTED yang ditempel manual di Slides tetap terbaca.
 - **Tab Kalender** (Zahra dan Ray): isi Content Calendar per akun. **+ Tambah ke kalender** untuk konten baru atau hari **No posting**. Klik judul untuk mengubah. Tombol Take, Edit, Post langsung mencentang TAKE, EDITING, POSTING di sheet. Baris baru masuk ke baris kosong pertama di bawah baris terakhir, kolom nomor (#) dan rumus di sheet tidak disentuh.

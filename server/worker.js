@@ -47,8 +47,8 @@ export default {
       const me = await authenticate(env, request);
       // Siapa boleh apa. "all" = semua akun aktif. Nama blok = pemilik blok itu. Ray (lead) boleh semua.
       const R = {
-        "GET /api/state": ["all", () => getState(env, me)],
-        "POST /api/refresh": ["lead", () => refresh(env, { force: false }).then((s) => forUser(s, me))],
+        "GET /api/state": ["all", () => fullState(env, me)],
+        "POST /api/refresh": ["lead", () => refreshAll(env, me)],
         "GET /api/me": ["all", () => ({ ok: true, user: publicUser(me) })],
         "POST /api/password": ["all", () => changeOwnPassword(env, me, body)],
         "POST /api/request/done": ["all", () => requestDone(env, body, me)],
@@ -65,11 +65,10 @@ export default {
         "GET /api/google": ["lead", () => googleConfigInfo(env)],
         "POST /api/google": ["lead", () => setGoogleConfig(env, body)],
         "GET /api/ep": ["all", () => getEp(env, me)],
-        "POST /api/ep/refresh": ["all", () => refreshEp(env).then(() => getEp(env, me))],
+        "GET /api/ep/thumb": ["all", () => epThumb(env, url)],
         "POST /api/ep/decision": ["lead", () => epDecision(env, body, me)],
         "POST /api/ep/posted": ["content", () => epPosted(env, body, me)],
         "GET /api/calendar": ["content", () => getCalendar(env)],
-        "POST /api/calendar/refresh": ["content", () => refreshCalendar(env).then((c) => ({ ok: true, ...c }))],
         "POST /api/calendar/save": ["content", () => calendarSave(env, body, me)],
         "POST /api/calendar/toggle": ["content", () => calendarToggle(env, body, me)],
         "GET /api/accounts": ["lead", () => listAccounts(env)],
@@ -873,8 +872,46 @@ async function refreshCalendar(env) {
   const parts = await readCalendar(env, g.calendar);
   const rows = parts.flatMap((p) => parseCalendarRows(p.values, p.tab));
   const out = { configured: true, title: g.calendar.title, id: g.calendar.id, accounts: g.calendar.tabs.map((t) => t.account), options: g.calendar.options, rows, fetchedAt: new Date().toISOString() };
-  await env.STORE.put("calcache", JSON.stringify(out));
+  await putIfChanged(env, "calcache", out);
   return out;
+}
+
+// Tulis cache ke KV hanya kalau isinya berubah, atau cache lama sudah lebih dari 1 jam (hemat kuota tulis KV 1.000/hari).
+async function putIfChanged(env, key, out) {
+  const prev = await env.STORE.get(key, "json");
+  const strip = (o) => JSON.stringify({ ...o, fetchedAt: "" });
+  const stale = !prev || Date.now() - Date.parse(prev.fetchedAt) > 60 * 60 * 1000;
+  if (stale || strip(prev) !== strip(out)) await env.STORE.put(key, JSON.stringify(out));
+}
+
+const GOOGLE_COOLDOWN_MS = 60 * 1000;
+let lastGoogleRefresh = 0; // per isolate; cukup untuk meredam klik beruntun
+
+// Dipanggil tombol muat ulang Ray: Lark dan Google, masing-masing paling sering sekali per menit.
+async function refreshAll(env, me) {
+  const lark = await refresh(env, { force: false });
+  if (Date.now() - lastGoogleRefresh > GOOGLE_COOLDOWN_MS) {
+    lastGoogleRefresh = Date.now();
+    await googleRefreshAll(env);
+  }
+  return fullState(env, me, forUser(lark, me));
+}
+
+// Satu request untuk semua data widget: request creative, EP, dan kalender (kalau boleh).
+async function fullState(env, me, base) {
+  const out = base || (await getState(env, me));
+  const g = await getGoogleConfig(env);
+  if (g.ep) out.ep = await getEp(env, me).catch((e) => ({ ok: false, error: e.message }));
+  if (g.calendar && allowed(me, "content")) out.cal = await getCalendar(env).catch((e) => ({ ok: false, error: e.message }));
+  return out;
+}
+
+async function epThumb(env, url) {
+  const c = await env.STORE.get("epcache", "json");
+  const id = url.searchParams.get("id") || "";
+  if (!c || !c.items.some((i) => i.id === id)) throw fail("Slide tidak ditemukan. Muat ulang.", 404);
+  const t = await google(env, "GET", `${SLIDES}/${c.id}/pages/${encodeURIComponent(id)}/thumbnail?thumbnailProperties.thumbnailSize=LARGE&thumbnailProperties.mimeType=PNG`);
+  return { ok: true, url: t.contentUrl, width: t.width, height: t.height };
 }
 
 async function getCalendar(env) {
@@ -989,7 +1026,6 @@ export function parseEpSlides(slides) {
       date: parseIndoDate(uploadRaw),
       reference: field(flat, /Reference\s*:\s*(https?:\/\/\S+)/i),
       posted,
-      body: parts.filter((p) => p.text.trim().toUpperCase() !== "POSTED").sort((a, b) => a.y - b.y || a.x - b.x).map((p) => p.text.trim()).filter(Boolean).join("\n\n").slice(0, 4000),
     });
   }
   return items;
@@ -1003,7 +1039,7 @@ async function refreshEp(env) {
   const pres = await google(env, "GET", `${SLIDES}/${g.ep.id}?fields=${encodeURIComponent(EP_FIELDS)}`);
   const items = parseEpSlides(pres.slides);
   const out = { configured: true, id: g.ep.id, title: g.ep.title, items, fetchedAt: new Date().toISOString() };
-  await env.STORE.put("epcache", JSON.stringify(out));
+  await putIfChanged(env, "epcache", out);
   return out;
 }
 

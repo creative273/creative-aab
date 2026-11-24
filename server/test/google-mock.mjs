@@ -82,6 +82,10 @@ export async function googleFetch(url, opts = {}) {
   }
   if (u.host === "slides.googleapis.com") {
     if (!u.pathname.includes(EP_ID)) return new Response(JSON.stringify({ error: { message: "forbidden" } }), { status: 403 });
+    if (u.pathname.includes("/pages/") && u.pathname.endsWith("/thumbnail")) {
+      assert.equal(u.searchParams.get("thumbnailProperties.thumbnailSize"), "LARGE");
+      return ok({ contentUrl: `https://lh3.googleusercontent.com/thumb-${u.pathname.split("/")[5]}`, width: 1600, height: 900 });
+    }
     if (u.pathname.endsWith(":batchUpdate")) {
       const { requests } = JSON.parse(opts.body);
       slideUpdates.push(requests);

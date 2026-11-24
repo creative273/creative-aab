@@ -102,7 +102,7 @@ async function loadState({ refresh = false } = {}) {
     const data = refresh ? await api("/api/refresh", {}) : await api("/api/state");
     ui.data = data;
     if (isLead() && ui.tab === "input") ui.dash = await api("/api/dashboard");
-    await loadGoogle({ refresh });
+    await applyGoogle(data);
     await checkNewRequests(data.requests || []);
   } catch (e) {
     ui.error = e.message;
@@ -907,15 +907,13 @@ const inWeek = (iso) => { const [a, b] = weekRange(); return iso >= a && iso <= 
 const words = (s) => new Set(String(s || "").toLowerCase().replace(/\(.*?\)/g, " ").split(/[^a-z0-9]+/).filter((w) => w.length > 2));
 const similar = (a, b) => { const A = words(a), B = words(b); if (!A.size || !B.size) return 0; let n = 0; A.forEach((w) => { if (B.has(w)) n++; }); return n / Math.min(A.size, B.size); };
 
-async function loadGoogle({ refresh = false } = {}) {
-  try {
-    ui.ep = await api(refresh ? "/api/ep/refresh" : "/api/ep", refresh ? {} : undefined);
-    if (canCal()) ui.cal = await api(refresh ? "/api/calendar/refresh" : "/api/calendar", refresh ? {} : undefined);
-    ui.gErr = "";
-    await checkEpRevisions();
-  } catch (e) {
-    ui.gErr = e.message;
-  }
+// EP dan kalender ikut dalam satu jawaban /api/state (atau /api/refresh untuk Ray).
+async function applyGoogle(data) {
+  const err = (data.ep && data.ep.ok === false && data.ep.error) || (data.cal && data.cal.ok === false && data.cal.error) || "";
+  ui.gErr = err;
+  ui.ep = data.ep && data.ep.ok !== false ? data.ep : data.ep ? ui.ep : { configured: false, items: [] };
+  if (canCal()) ui.cal = data.cal && data.cal.ok !== false ? data.cal : data.cal ? ui.cal : { configured: false, rows: [] };
+  if (!err) await checkEpRevisions();
 }
 
 // Tim dapat pop-up saat Ray memberi revisi atau OKE di EP.
@@ -1042,17 +1040,53 @@ function epDetailView() {
       <dt>Status</dt><dd>${epPill(i)}</dd>
       ${i.reference ? `<dt>Reference</dt><dd><a href="${esc(i.reference)}" target="_blank" rel="noopener">${esc(i.reference)}</a></dd>` : ""}
     </dl>
-    <a class="btn secondary as-link" href="https://docs.google.com/presentation/d/${esc(ui.ep.id)}/edit#slide=id.${esc(i.id)}" target="_blank" rel="noopener">Buka slide ini</a>
+    ${slideShot(i)}
+    <a class="btn secondary as-link" href="https://docs.google.com/presentation/d/${esc(ui.ep.id)}/edit#slide=id.${esc(i.id)}" target="_blank" rel="noopener">Buka slide ini di Google Slides</a>
     ${decision}
     ${post}
     ${f.msg ? `<p class="msg ${f.msgType}" role="status">${esc(f.msg)}</p>` : ""}
-    <details class="section ep-body"><summary>Isi slide</summary><p class="detail-info">${esc(i.body)}</p></details>
   </div>`;
+}
+
+// Screenshot slide dari Google (link berlaku sekitar 30 menit, disimpan 25 menit di memori).
+const THUMB_MS = 25 * 60 * 1000;
+function slideShot(i) {
+  const t = (ui.thumbs || {})[i.id];
+  if (t && t.error) return `<div class="slide-shot empty-shot"><p>${esc(t.error)}</p><button class="linklike" data-act="thumbRetry">Coba lagi</button></div>`;
+  if (!t || Date.now() - t.at > THUMB_MS) return `<div class="slide-shot empty-shot" aria-busy="true"><p>Memuat gambar slide…</p></div>`;
+  return `<button class="slide-shot" data-act="zoom" aria-label="Perbesar gambar slide"><img src="${esc(t.url)}" alt="Slide EP: ${esc(i.cover || i.format)}" width="${t.width}" height="${t.height}"></button>`;
+}
+async function loadThumb(id) {
+  ui.thumbs = ui.thumbs || {};
+  const t = ui.thumbs[id];
+  if (t && !t.error && Date.now() - t.at < THUMB_MS) return;
+  if (t && t.loading) return;
+  ui.thumbs[id] = { loading: true, at: 0 };
+  try {
+    const r = await api(`/api/ep/thumb?id=${encodeURIComponent(id)}`);
+    ui.thumbs[id] = { url: r.url, width: r.width, height: r.height, at: Date.now() };
+  } catch (e) { ui.thumbs[id] = { error: e.message, at: Date.now() }; }
+  if (ui.tab === "ep" && ui.view === "detail" && ui.epOpen === id) render();
+}
+function openZoom(url, alt) {
+  const z = document.createElement("div");
+  z.className = "zoom";
+  z.setAttribute("role", "dialog");
+  z.setAttribute("aria-label", "Gambar slide diperbesar. Klik atau tekan Esc untuk menutup.");
+  z.innerHTML = `<img src="${esc(url)}" alt="${esc(alt)}">`;
+  const close = () => { z.remove(); document.removeEventListener("keydown", key, true); };
+  const key = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  z.addEventListener("click", close);
+  document.addEventListener("keydown", key, true);
+  document.body.appendChild(z);
 }
 
 function bindEpDetail() {
   bindCommon();
   on("gRetry", () => loadState());
+  if (ui.ep && ui.ep.items.some((x) => x.id === ui.epOpen)) loadThumb(ui.epOpen);
+  on("thumbRetry", () => { delete ui.thumbs[ui.epOpen]; loadThumb(ui.epOpen); });
+  on("zoom", () => { const t = ui.thumbs[ui.epOpen]; if (t && t.url) openZoom(t.url, "Slide EP"); });
   keep(["epNote", "epLink"]);
   const i = ui.ep && ui.ep.items.find((x) => x.id === ui.epOpen);
   if (!i) return;
@@ -1355,7 +1389,7 @@ function bindSettings() {
       if (calendarUrl) parts.push(`Kalender: ${res.calendar.tabs.map((t) => t.account).join(" dan ")}, ${res.calendarRows} baris.`);
       if (epUrl) parts.push(`EP: ${res.epItems} konten.`);
       ui.form = { msg: `Tersimpan. ${parts.join(" ")}${(res.warnings || []).map((w) => ` ${w}`).join("")}`, msgType: "ok" };
-      await loadGoogle();
+      await loadState();
     } catch (e) { ui.form.busyG = false; ui.form.msg = e.message; ui.form.msgType = "err"; }
     render();
   });
