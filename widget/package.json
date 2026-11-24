@@ -1,0 +1,67 @@
+{
+  "name": "creative-aab",
+  "productName": "Creative AAB",
+  "version": "1.1.0",
+  "description": "Widget KPI dan request creative tim AAB",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64 --publish never"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
+    "resedit": "^3.1.1",
+    "xlsx": "^0.18.5"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  },
+  "build": {
+    "appId": "com.agensianakbangsa.creative",
+    "productName": "Creative AAB",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "renderer/**",
+      "assets/**"
+    ],
+    "afterPack": "build/afterPack.js",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "Creative-AAB-Setup-${version}.${ext}",
+      "shortcutName": "Creative AAB",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "creative273",
+        "repo": "creative-aab",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

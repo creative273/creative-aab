@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src https: http://localhost:*">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Creative AAB</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <img class="bar-logo" src="logo.png" alt="Creative AAB" width="28" height="28">
+  <span class="bar-sub" id="barSub"></span>
+  <span class="bar-space"></span>
+  <button class="icon-btn" id="btnRefresh" aria-label="Muat ulang data" title="Muat ulang data">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.8-4.3"/><path d="M16 3.5V7h-3.5"/></svg>
+  </button>
+  <button class="icon-btn" id="btnPin" aria-label="Selalu di atas" title="Selalu di atas" aria-pressed="false">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 3h6l-1 5 3 3H5l3-3z"/><path d="M10 11v6"/></svg>
+  </button>
+  <button class="icon-btn" id="btnSettings" aria-label="Pengaturan" title="Pengaturan">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6"/></svg>
+  </button>
+  <button class="icon-btn" id="btnHide" aria-label="Sembunyikan ke tray" title="Sembunyikan ke tray">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 10h10"/></svg>
+  </button>
+</header>
+<nav class="tabs" role="tablist" aria-label="Menu">
+  <button class="tab" role="tab" id="tabRequest" aria-selected="true">Request <span class="count" id="reqCount"></span></button>
+  <button class="tab" role="tab" id="tabInput" aria-selected="false">Input KPI</button>
+</nav>
+<main id="view" tabindex="-1"></main>
+<div class="footer-note" id="footer" aria-live="polite"></div>
+<script src="xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
