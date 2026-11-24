@@ -31,6 +31,7 @@ const esc = (s) =>
 const member = () => MEMBERS.find((m) => m.id === (ui.settings.user && ui.settings.user.member)) || null;
 const configured = () => !!(ui.settings.serverUrl && ui.settings.token && ui.settings.user);
 const isLead = () => !!(ui.settings.user && ui.settings.user.block === "lead");
+const canCal = () => !!(ui.settings.user && ["lead", "content"].includes(ui.settings.user.block));
 // Tim hanya melihat request yang sudah di-approve Ray (kolom G = APPROVE). Ray melihat semua.
 const visibleRequests = () => {
   const all = (ui.data && ui.data.requests) || [];
@@ -68,7 +69,7 @@ async function api(path, body) {
 
 async function logout(msg) {
   ui.settings = await window.aab.saveSettings({ token: "", user: null });
-  ui.data = null; ui.dash = null; ui.tab = "request"; ui.view = "list"; ui.filter = null;
+  ui.data = null; ui.dash = null; ui.ep = null; ui.cal = null; ui.gcfg = null; ui.gErr = ""; ui.tab = "request"; ui.view = "list"; ui.filter = null;
   ui.form = msg ? { msg, msgType: "info" } : {};
   render();
 }
@@ -82,6 +83,7 @@ async function loadState({ refresh = false } = {}) {
     const data = refresh ? await api("/api/refresh", {}) : await api("/api/state");
     ui.data = data;
     if (isLead() && ui.tab === "input") ui.dash = await api("/api/dashboard");
+    await loadGoogle({ refresh });
     await checkNewRequests(data.requests || []);
   } catch (e) {
     ui.error = e.message;
@@ -126,6 +128,12 @@ function render() {
   } else if (ui.view === "settings") {
     view.innerHTML = settingsView();
     bindSettings();
+  } else if (ui.tab === "ep") {
+    view.innerHTML = ui.view === "detail" ? epDetailView() : epListView();
+    ui.view === "detail" ? bindEpDetail() : bindEpList();
+  } else if (ui.tab === "cal" && canCal()) {
+    view.innerHTML = ui.view === "detail" ? calFormView() : calListView();
+    ui.view === "detail" ? bindCalForm() : bindCalList();
   } else if (ui.tab === "request") {
     view.innerHTML = ui.view === "detail" ? detailView() : requestListView();
     ui.view === "detail" ? bindDetail() : bindRequestList();
@@ -143,6 +151,12 @@ function renderBar() {
   $("tabRequest").setAttribute("aria-selected", String(ui.tab === "request" && ui.view !== "settings"));
   $("tabInput").setAttribute("aria-selected", String(ui.tab === "input" && ui.view !== "settings"));
   $("tabInput").textContent = isLead() ? "Dashboard" : "Input KPI";
+  $("tabEp").setAttribute("aria-selected", String(ui.tab === "ep" && ui.view !== "settings"));
+  $("tabCal").setAttribute("aria-selected", String(ui.tab === "cal" && ui.view !== "settings"));
+  $("tabCal").hidden = !canCal();
+  const epItems = (ui.ep && ui.ep.items) || [];
+  const epOpen = isLead() ? epItems.filter((i) => !i.posted && !i.decision).length : epItems.filter((i) => !i.posted && i.decision && i.decision.status === "REVISI").length;
+  $("epCount").textContent = ui.ep && ui.ep.configured && epOpen ? `(${epOpen})` : "";
   document.querySelector(".tabs").hidden = !configured();
   $("btnPin").classList.toggle("on", !!ui.settings.pinned);
   $("btnPin").setAttribute("aria-pressed", String(!!ui.settings.pinned));
@@ -793,6 +807,20 @@ function dashboardView() {
         <button data-goreq="all"><b>${r.done ?? 0}</b>selesai</button>
       </div>
     </div>
+    ${d.plan ? `<div class="section">
+      <h2>Content plan minggu ini</h2>
+      <p class="hint gap-below">${esc(fmtDate(d.plan.start))} sampai ${esc(fmtDate(d.plan.end))}, dari Content Calendar.</p>
+      ${Object.keys(d.plan.accounts).length ? `<div class="req-stats plan">${Object.entries(d.plan.accounts).map(([a, p]) => `<button data-gocal="${esc(a)}"><span class="plan-acc">${esc(a)}</span><b>${p.posted}/${p.planned}</b>sudah posting${p.late ? `<span class="plan-late">${p.late} lewat tanggal</span>` : ""}</button>`).join("")}</div>` : `<p class="hint">Belum ada konten di kalender minggu ini.</p>`}
+    </div>` : ""}
+    ${d.ep ? `<div class="section">
+      <h2>Editorial plan</h2>
+      <div class="req-stats">
+        <button data-goep="wait"><b>${d.ep.waiting}</b>menunggu keputusan</button>
+        <button data-goep="rev"><b>${d.ep.revisi}</b>revisi</button>
+        <button data-goep="all"><b>${d.ep.posted}</b>posted</button>
+        <button data-goep="all"><b>${d.ep.total}</b>total EP</button>
+      </div>
+    </div>` : ""}
     <div class="section">
       <h2>Aktivitas terbaru</h2>
       ${act.length ? `<ul class="activity">${act.map((x) => `<li><span class="act-who">${esc((MEMBERS.find((m) => m.id === x.member) || {}).short || x.who)}</span><span class="act-text">${esc(x.text)}</span><span class="act-time">${esc(ago(x.at))}</span></li>`).join("")}</ul>` : `<p class="hint">Belum ada kiriman lewat widget sejak update ini.</p>`}
@@ -800,6 +828,8 @@ function dashboardView() {
 }
 
 function bindDashboard() {
+  document.querySelectorAll("[data-goep]").forEach((b) => b.addEventListener("click", () => { ui.tab = "ep"; ui.view = "list"; ui.epFilter = b.dataset.goep; ui.form = {}; render(); }));
+  document.querySelectorAll("[data-gocal]").forEach((b) => b.addEventListener("click", () => { ui.tab = "cal"; ui.view = "list"; ui.calAcc = b.dataset.gocal; ui.calFilter = "week"; ui.form = {}; render(); }));
   document.querySelectorAll("[data-goreq]").forEach((b) =>
     b.addEventListener("click", () => { ui.tab = "request"; ui.view = "list"; ui.filter = b.dataset.goreq; ui.form = {}; render(); })
   );
@@ -832,6 +862,340 @@ function bindAigc() {
       ui.form = { msg: res.replaced ? `Angka tanggal ini diperbarui (baris ${res.row}).` : `Tersimpan di baris ${res.row} blok AIGC.`, msgType: "ok" };
       await loadState();
     } catch (e) { f.busy = false; setMsg(e.message, "err"); }
+  });
+}
+
+// ---------- EP dan Content Calendar (Google) ----------
+const HARI = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+const BLN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+const fmtDate = (iso) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso || "")) return iso || "Tanpa tanggal";
+  const d = new Date(`${iso}T00:00:00`);
+  return `${HARI[d.getDay()]} ${d.getDate()} ${BLN[d.getMonth()]}`;
+};
+const weekRange = () => {
+  const t = new Date(`${todayISO()}T00:00:00`);
+  const dow = (t.getDay() + 6) % 7;
+  const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return [iso(new Date(t.getTime() - dow * 864e5)), iso(new Date(t.getTime() + (6 - dow) * 864e5))];
+};
+const inWeek = (iso) => { const [a, b] = weekRange(); return iso >= a && iso <= b; };
+const words = (s) => new Set(String(s || "").toLowerCase().replace(/\(.*?\)/g, " ").split(/[^a-z0-9]+/).filter((w) => w.length > 2));
+const similar = (a, b) => { const A = words(a), B = words(b); if (!A.size || !B.size) return 0; let n = 0; A.forEach((w) => { if (B.has(w)) n++; }); return n / Math.min(A.size, B.size); };
+
+async function loadGoogle({ refresh = false } = {}) {
+  try {
+    ui.ep = await api(refresh ? "/api/ep/refresh" : "/api/ep", refresh ? {} : undefined);
+    if (canCal()) ui.cal = await api(refresh ? "/api/calendar/refresh" : "/api/calendar", refresh ? {} : undefined);
+    ui.gErr = "";
+    await checkEpRevisions();
+  } catch (e) {
+    ui.gErr = e.message;
+  }
+}
+
+// Tim dapat pop-up saat Ray memberi revisi atau OKE di EP.
+async function checkEpRevisions() {
+  if (isLead() || !ui.ep || !ui.ep.configured) return;
+  const seen = new Set(ui.settings.epSeen || []);
+  const all = ui.ep.items.filter((i) => i.decision && !i.posted);
+  const key = (i) => `${i.id}:${i.decision.seq}`;
+  const fresh = all.filter((i) => !seen.has(key(i)));
+  if (ui.settings.epSeenInit && fresh.length) {
+    const rev = fresh.filter((i) => i.decision.status === "REVISI");
+    const last = (rev.length ? rev : fresh)[(rev.length ? rev : fresh).length - 1];
+    window.aab.showPopup(
+      rev.length
+        ? { id: `ep:${last.id}`, title: rev.length === 1 ? `Revisi EP: ${last.cover || last.format}` : `${rev.length} EP perlu revisi`, body: rev.length === 1 ? last.decision.note : rev.map((i) => i.cover).join(", ") }
+        : { id: `ep:${last.id}`, title: fresh.length === 1 ? `EP di-OKE: ${last.cover || last.format}` : `${fresh.length} EP di-OKE Ray`, body: "Lanjut produksi." }
+    );
+  }
+  ui.settings = await window.aab.saveSettings({ epSeen: [...new Set([...seen, ...all.map(key)])].slice(-500), epSeenInit: true });
+}
+
+const epPill = (i) =>
+  i.posted ? '<span class="pill done">POSTED</span>'
+  : !i.decision ? '<span class="pill wait">Menunggu</span>'
+  : i.decision.status === "REVISI" ? '<span class="pill rej">Revisi</span>'
+  : '<span class="pill new">OKE</span>';
+
+function googleBlock(kind) {
+  if (ui.gErr) return `<div class="pad"><p class="msg err" role="alert">${esc(ui.gErr)}</p><button class="btn secondary" data-act="gRetry">Coba lagi</button></div>`;
+  const d = kind === "ep" ? ui.ep : ui.cal;
+  if (!d) return `<p class="empty">Memuat…</p>`;
+  if (!d.configured)
+    return `<div class="empty"><p>Link ${kind === "ep" ? "EP (Google Slides)" : "Content Calendar (Google Sheets)"} bulan ini belum diisi.</p>${isLead() ? `<button class="btn" data-act="settings">Buka Pengaturan</button>` : "<p>Minta Ray mengisinya di Pengaturan.</p>"}</div>`;
+  return "";
+}
+
+function accountSeg(list, cur, attr) {
+  return `<div class="seg acc-seg" role="group" aria-label="Akun">${list.map((a) => `<button data-${attr}="${esc(a)}" aria-pressed="${a === cur}">${esc(a)}</button>`).join("")}</div>`;
+}
+
+function epListView() {
+  const blocked = googleBlock("ep");
+  if (blocked) return blocked;
+  const items = ui.ep.items;
+  const accounts = [...new Set(items.map((i) => i.account))];
+  const acc = accounts.includes(ui.epAcc) ? ui.epAcc : accounts[0] || "AAB";
+  const mine = items.filter((i) => i.account === acc);
+  const groups = {
+    week: ["Minggu ini", mine.filter((i) => inWeek(i.date))],
+    wait: ["Menunggu", mine.filter((i) => !i.posted && !i.decision)],
+    rev: ["Revisi", mine.filter((i) => !i.posted && i.decision && i.decision.status === "REVISI")],
+    all: ["Semua", mine],
+  };
+  const filter = groups[ui.epFilter] ? ui.epFilter : "week";
+  const list = groups[filter][1];
+  return `<div class="list-head">${accountSeg(accounts, acc, "epacc")}
+      <a class="linklike" href="https://docs.google.com/presentation/d/${esc(ui.ep.id)}/edit" target="_blank" rel="noopener">Buka Slides</a></div>
+    <div class="filter" role="group" aria-label="Saring EP">${Object.entries(groups).map(([k, [l, a]]) => `<button data-epf="${k}" aria-pressed="${filter === k}">${l} (${a.length})</button>`).join("")}</div>
+    ${list.length ? `<ul class="req-list">${list.map((i) => `<li><button class="req" data-ep="${esc(i.id)}">
+        <p class="req-info">${esc(i.cover || "(cover belum diisi)")}</p>
+        <span class="req-meta"><span>${esc(fmtDate(i.date))}${i.format ? `, ${esc(i.format)}` : ""}${i.talent ? `, ${esc(i.talent)}` : ""}</span>${epPill(i)}</span>
+      </button></li>`).join("")}</ul>` : `<p class="empty">Tidak ada EP di filter ini.</p>`}`;
+}
+
+function bindEpList() {
+  bindCommon();
+  on("gRetry", () => loadState());
+  document.querySelectorAll("[data-epacc]").forEach((b) => b.addEventListener("click", () => { ui.epAcc = b.dataset.epacc; render(); }));
+  document.querySelectorAll("[data-epf]").forEach((b) => b.addEventListener("click", () => { ui.epFilter = b.dataset.epf; render(); }));
+  document.querySelectorAll("[data-ep]").forEach((b) => b.addEventListener("click", () => { ui.epOpen = b.dataset.ep; ui.view = "detail"; ui.form = {}; render(); }));
+}
+
+function calCandidates(item) {
+  const rows = ((ui.cal && ui.cal.rows) || []).filter((r) => r.account === item.account && !r.noPosting && r.content);
+  return rows
+    .map((r) => ({ r, score: (r.date === item.date ? 2 : 0) + similar(r.content, item.cover) - (r.posting ? 0.5 : 0) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 12);
+}
+
+function epDetailView() {
+  const blocked = googleBlock("ep");
+  if (blocked) return blocked;
+  const i = ui.ep.items.find((x) => x.id === ui.epOpen);
+  if (!i) return `<div class="pad"><button class="back" data-act="back">← Kembali</button><p class="msg info">Slide ini tidak ada lagi di EP.</p></div>`;
+  const f = ui.form;
+  const dec = i.decision;
+  let decision = "";
+  if (ui.ep.canDecide && !i.posted) {
+    decision = `<div class="section"><h2>Keputusan Ray</h2>
+      <div class="seg decide" role="group" aria-label="Keputusan EP">
+        <button data-epdec="OKE" aria-pressed="${dec && dec.status === "OKE"}">OKE</button>
+        <button data-epdec="REVISI" aria-pressed="${(dec && dec.status === "REVISI") || f.epRev ? "true" : "false"}">Revisi</button>
+      </div>
+      ${f.epRev ? `<label for="epNote">Catatan revisi</label><textarea id="epNote" rows="3" placeholder="Contoh: revisi di kolom VISUAL">${esc(f.epNote ?? (dec && dec.note) ?? "")}</textarea>
+        <div class="row2"><button class="btn secondary" data-act="epRevCancel">Batal</button><button class="btn" data-act="epRevSave" ${f.busy ? "disabled" : ""}>${f.busy ? "Menyimpan…" : "Kirim revisi"}</button></div>` : ""}
+      ${dec ? `<p class="hint">Terakhir: ${esc(dec.status)} oleh ${esc(dec.by)}, ${esc(ago(dec.at))}. <button class="linklike" data-act="epClear">Hapus status</button></p>` : ""}
+    </div>`;
+  } else if (dec && !i.posted) {
+    decision = `<div class="section"><h2>Keputusan Ray</h2><p class="msg ${dec.status === "REVISI" ? "err" : "ok"}">${dec.status === "REVISI" ? `Perlu revisi. Catatan Ray: ${esc(dec.note)}` : "OKE, lanjut produksi."}</p></div>`;
+  }
+  let post = "";
+  if (ui.ep.canPost && !i.posted) {
+    const cands = calCandidates(i);
+    const sel = f.epCal !== undefined ? f.epCal : cands.length && cands[0].score >= 2.3 ? cands[0].r.id : "";
+    post = `<div class="section"><h2>Tandai POSTED</h2>
+      <p class="hint">Stempel POSTED ditempel di slide. Kalau baris kalender dipilih, kolom POSTING dicentang dan Link Post diisi.</p>
+      <label for="epLink">Link post</label><input type="url" id="epLink" value="${esc(f.epLink || "")}" placeholder="https://www.instagram.com/reel/...">
+      ${ui.cal && ui.cal.configured ? `<label for="epCal">Baris di Content Calendar</label>
+      <select id="epCal"><option value="">Jangan ubah kalender</option>${cands.map(({ r }) => `<option value="${esc(r.id)}" ${sel === r.id ? "selected" : ""}>${esc(fmtDate(r.date))}: ${esc(r.content.slice(0, 50))}${r.posting ? " (sudah POSTING)" : ""}</option>`).join("")}</select>` : ""}
+      ${f.epConfirm ? `<p class="msg info">Tempel stempel POSTED di slide ini${sel ? " dan centang POSTING di kalender" : ""}. Lanjut?</p>
+        <div class="row2"><button class="btn secondary" data-act="epPostCancel">Batal</button><button class="btn" data-act="epPostDo" ${f.busy ? "disabled" : ""}>${f.busy ? "Menyimpan…" : "Ya, POSTED"}</button></div>`
+        : `<button class="btn" data-act="epPostAsk">Tandai POSTED</button>`}
+    </div>`;
+  }
+  return `<div class="pad">
+    <button class="back" data-act="back">← Kembali</button>
+    <p class="detail-title">${esc(i.cover || "(cover belum diisi)")}</p>
+    <dl class="facts">
+      <dt>Upload</dt><dd>${esc(i.uploadText || "-")}</dd>
+      <dt>Akun</dt><dd>${esc(i.account)}</dd>
+      <dt>Format</dt><dd>${esc(i.format || "-")}</dd>
+      <dt>Talent</dt><dd>${esc(i.talent || "-")}</dd>
+      <dt>Status</dt><dd>${epPill(i)}</dd>
+      ${i.reference ? `<dt>Reference</dt><dd><a href="${esc(i.reference)}" target="_blank" rel="noopener">${esc(i.reference)}</a></dd>` : ""}
+    </dl>
+    <a class="btn secondary as-link" href="https://docs.google.com/presentation/d/${esc(ui.ep.id)}/edit#slide=id.${esc(i.id)}" target="_blank" rel="noopener">Buka slide ini</a>
+    ${decision}
+    ${post}
+    ${f.msg ? `<p class="msg ${f.msgType}" role="status">${esc(f.msg)}</p>` : ""}
+    <details class="section ep-body"><summary>Isi slide</summary><p class="detail-info">${esc(i.body)}</p></details>
+  </div>`;
+}
+
+function bindEpDetail() {
+  bindCommon();
+  on("gRetry", () => loadState());
+  keep(["epNote", "epLink"]);
+  const i = ui.ep && ui.ep.items.find((x) => x.id === ui.epOpen);
+  if (!i) return;
+  const selCal = $("epCal");
+  if (selCal) selCal.addEventListener("change", () => { ui.form.epCal = selCal.value; });
+  const decide = async (status, note) => {
+    ui.form.busy = true; render();
+    try {
+      ui.ep = await api("/api/ep/decision", { id: i.id, status, note });
+      ui.form = { msg: status === "OKE" ? "EP di-OKE. Tim mendapat pemberitahuan." : status === "REVISI" ? "Revisi terkirim ke tim." : "Status dihapus.", msgType: "ok" };
+    } catch (e) { ui.form.busy = false; ui.form.msg = e.message; ui.form.msgType = "err"; }
+    render();
+  };
+  document.querySelectorAll("[data-epdec]").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.epdec === "OKE") decide("OKE", "");
+    else { ui.form.epRev = true; ui.form.msg = ""; render(); const n = $("epNote"); if (n) n.focus(); }
+  }));
+  on("epRevCancel", () => { ui.form = {}; render(); });
+  on("epRevSave", () => {
+    const note = (ui.form.epNote ?? (i.decision && i.decision.note) ?? "").trim();
+    if (!note) return setMsg("Tulis catatan revisinya dulu.", "err");
+    decide("REVISI", note);
+  });
+  on("epClear", () => decide("", ""));
+  on("epPostAsk", () => {
+    const link = (ui.form.epLink || "").trim();
+    if (link && !/^https?:\/\//i.test(link)) return setMsg("Link post harus diawali https://", "err");
+    if (selCal) ui.form.epCal = selCal.value;
+    ui.form.epConfirm = true; ui.form.msg = ""; render();
+  });
+  on("epPostCancel", () => { ui.form.epConfirm = false; render(); });
+  on("epPostDo", async () => {
+    ui.form.busy = true; render();
+    try {
+      const res = await api("/api/ep/posted", { id: i.id, link: (ui.form.epLink || "").trim(), calendarId: ui.form.epCal || "" });
+      ui.ep = res.ep;
+      if (res.calendarRow && canCal()) ui.cal = await api("/api/calendar");
+      ui.form = { msg: `${res.stamped ? "Stempel POSTED ditempel di slide." : "Slide sudah POSTED."}${res.calendarRow ? ` Kalender baris ${res.calendarRow} dicentang POSTING.` : ""}`, msgType: "ok" };
+    } catch (e) { ui.form.busy = false; ui.form.epConfirm = false; ui.form.msg = e.message; ui.form.msgType = "err"; }
+    render();
+  });
+}
+
+// ----- Content Calendar -----
+function calListView() {
+  const blocked = googleBlock("cal");
+  if (blocked) return blocked;
+  const accounts = ui.cal.accounts || [];
+  const acc = accounts.includes(ui.calAcc) ? ui.calAcc : accounts[0];
+  const all = ui.cal.rows.filter((r) => r.account === acc).sort((a, b) => (a.date || "9").localeCompare(b.date || "9") || a.row - b.row);
+  const filter = ui.calFilter || "week";
+  const rows = filter === "week" ? all.filter((r) => inWeek(r.date)) : filter === "todo" ? all.filter((r) => !r.noPosting && !r.posting) : all;
+  let last = null;
+  const body = rows
+    .map((r) => {
+      const head = r.date !== last ? `<li class="cal-date">${esc(fmtDate(r.date))}</li>` : "";
+      last = r.date;
+      if (r.noPosting) return `${head}<li class="cal-row cal-off"><button class="cal-main" data-calrow="${esc(r.id)}"><span class="cal-title">NO POSTING</span></button></li>`;
+      return `${head}<li class="cal-row">
+        <button class="cal-main" data-calrow="${esc(r.id)}">
+          <span class="cal-title">${esc(r.content)}</span>
+          <span class="cal-meta">${esc([r.pillar.replace(/^\d+\.\s*/, ""), r.format, r.note].filter(Boolean).join(", "))}</span>
+        </button>
+        <div class="cal-checks" role="group" aria-label="Progres ${esc(r.content)}">
+          ${[["take", "Take"], ["editing", "Edit"], ["posting", "Post"]].map(([k, l]) => `<button data-tog="${esc(r.id)}" data-field="${k}" aria-pressed="${r[k]}" title="${k.toUpperCase()}">${l}</button>`).join("")}
+          ${r.link ? `<a href="${esc(r.link)}" target="_blank" rel="noopener" class="cal-link" aria-label="Buka link post">Link</a>` : ""}
+        </div>
+      </li>`;
+    })
+    .join("");
+  return `<div class="list-head">${accountSeg(accounts, acc, "calacc")}
+      <a class="linklike" href="https://docs.google.com/spreadsheets/d/${esc(ui.cal.id)}/edit" target="_blank" rel="noopener">Buka Sheet</a></div>
+    <div class="filter" role="group" aria-label="Saring kalender">
+      ${[["week", "Minggu ini"], ["todo", "Belum posting"], ["all", "Semua"]].map(([k, l]) => `<button data-calf="${k}" aria-pressed="${filter === k}">${l}</button>`).join("")}
+    </div>
+    <div class="pad-x"><button class="btn" data-act="calAdd">+ Tambah ke kalender</button></div>
+    ${rows.length ? `<ul class="cal-list">${body}</ul>` : `<p class="empty">Belum ada baris di filter ini.</p>`}
+    ${ui.form.msg ? `<p class="msg ${ui.form.msgType} pad-x" role="status">${esc(ui.form.msg)}</p>` : ""}`;
+}
+
+function bindCalList() {
+  bindCommon();
+  on("gRetry", () => loadState());
+  document.querySelectorAll("[data-calacc]").forEach((b) => b.addEventListener("click", () => { ui.calAcc = b.dataset.calacc; render(); }));
+  document.querySelectorAll("[data-calf]").forEach((b) => b.addEventListener("click", () => { ui.calFilter = b.dataset.calf; render(); }));
+  on("calAdd", () => {
+    const acc = (ui.cal.accounts || []).includes(ui.calAcc) ? ui.calAcc : (ui.cal.accounts || [])[0];
+    const o = ui.cal.options || {};
+    ui.form = { edit: { account: acc, date: todayISO(), pillar: "", format: (o.formats || [])[0] || "", platform: (o.platforms || [])[0] || "", content: "", note: "", fa: "", link: "", take: false, editing: false, posting: false, noPosting: false } };
+    ui.view = "detail"; render();
+  });
+  document.querySelectorAll("[data-calrow]").forEach((b) => b.addEventListener("click", () => {
+    const r = ui.cal.rows.find((x) => x.id === b.dataset.calrow);
+    if (!r) return;
+    ui.form = { edit: { ...r } }; ui.view = "detail"; render();
+  }));
+  document.querySelectorAll("[data-tog]").forEach((b) => b.addEventListener("click", async () => {
+    const value = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", String(value)); b.disabled = true;
+    try {
+      const res = await api("/api/calendar/toggle", { id: b.dataset.tog, field: b.dataset.field, value });
+      ui.cal = { ok: true, ...res.calendar }; ui.form = {};
+    } catch (e) { ui.form = { msg: e.message, msgType: "err" }; }
+    render();
+  }));
+}
+
+function calFormView() {
+  const blocked = googleBlock("cal");
+  if (blocked) return blocked;
+  const e = ui.form.edit;
+  const o = ui.cal.options || {};
+  const opt = (list, cur) => {
+    const all = cur && !list.includes(cur) ? [cur, ...list] : list;
+    return `<option value="">-</option>${all.map((x) => `<option ${x === cur ? "selected" : ""}>${esc(x)}</option>`).join("")}`;
+  };
+  const f = ui.form;
+  return `<div class="pad">
+    <button class="back" data-act="back">← Kembali</button>
+    <h2>${e.id ? `Ubah baris ${e.row}` : "Tambah ke kalender"}</h2>
+    <label>Akun</label>${accountSeg(ui.cal.accounts || [], e.account, "fAcc")}
+    <label for="fDate">Tanggal</label><input type="date" id="fDate" value="${esc(e.date)}">
+    <label class="check"><input type="checkbox" id="fNo" ${e.noPosting ? "checked" : ""}> No posting (libur atau memang tidak posting)</label>
+    ${e.noPosting ? "" : `
+      <label for="fContent">Judul konten</label><input type="text" id="fContent" value="${esc(e.content)}" placeholder="Contoh: Animasi 6 : Ganti Niche Terus">
+      <div class="row2">
+        <div><label for="fPillar">Content pillar</label><select id="fPillar">${opt(o.pillars || [], e.pillar)}</select></div>
+        <div><label for="fFormat">Format</label><select id="fFormat">${opt(o.formats || [], e.format)}</select></div>
+      </div>
+      <div class="row2">
+        <div><label for="fPlatform">Platform</label><select id="fPlatform">${opt(o.platforms || [], e.platform)}</select></div>
+        <div><label for="fNote">Time / catatan</label><input type="text" id="fNote" value="${esc(e.note)}" placeholder="TAKE / REFLY"></div>
+      </div>
+      <label for="fFa">FA Content</label><input type="text" id="fFa" value="${esc(e.fa)}" placeholder="26/11 - Ganti Niche">
+      <label for="fLink">Link post</label><input type="url" id="fLink" value="${esc(e.link)}" placeholder="https://www.instagram.com/...">
+      <div class="seg cal-checks-form" role="group" aria-label="Progres">
+        ${[["take", "TAKE"], ["editing", "EDITING"], ["posting", "POSTING"]].map(([k, l]) => `<button data-fchk="${k}" aria-pressed="${!!e[k]}">${l}</button>`).join("")}
+      </div>`}
+    <button class="btn" data-act="calSave" ${f.busy ? "disabled" : ""}>${f.busy ? "Menyimpan…" : e.id ? "Simpan perubahan" : "Tambah ke sheet"}</button>
+    ${f.msg ? `<p class="msg ${f.msgType}" role="status">${esc(f.msg)}</p>` : ""}
+  </div>`;
+}
+
+function bindCalForm() {
+  bindCommon();
+  on("gRetry", () => loadState());
+  const e = ui.form.edit;
+  if (!e) { ui.view = "list"; render(); return; }
+  const map = { fDate: "date", fContent: "content", fPillar: "pillar", fFormat: "format", fPlatform: "platform", fNote: "note", fFa: "fa", fLink: "link" };
+  Object.entries(map).forEach(([id, k]) => { const el = $(id); if (el) el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => { e[k] = el.value; }); });
+  const no = $("fNo");
+  no.addEventListener("change", () => { e.noPosting = no.checked; render(); });
+  document.querySelectorAll("[data-facc]").forEach((b) => b.addEventListener("click", () => { e.account = b.dataset.facc; render(); }));
+  document.querySelectorAll("[data-fchk]").forEach((b) => b.addEventListener("click", () => { e[b.dataset.fchk] = !e[b.dataset.fchk]; render(); }));
+  on("calSave", async () => {
+    if (!e.date) return setMsg("Tanggal wajib diisi.", "err");
+    if (!e.noPosting && !(e.content || "").trim()) return setMsg("Isi judul konten, atau centang No posting.", "err");
+    if (e.link && !/^https?:\/\//i.test(e.link)) return setMsg("Link post harus diawali https://", "err");
+    ui.form.busy = true; render();
+    try {
+      const res = await api("/api/calendar/save", e);
+      ui.cal = { ok: true, ...res.calendar };
+      ui.calAcc = e.account;
+      ui.form = { msg: `${e.id ? "Baris diperbarui" : "Ditambahkan"} di baris ${res.row} tab ${e.account}.`, msgType: "ok" };
+      ui.view = "list";
+    } catch (err) { ui.form.busy = false; ui.form.msg = err.message; ui.form.msgType = "err"; }
+    render();
   });
 }
 
@@ -913,6 +1277,7 @@ function settingsView() {
       <label for="sSheet">Link sheet Lark</label><input type="url" id="sSheet" value="${esc(f.sSheet || "")}" placeholder="https://....larksuite.com/sheets/...">
       <button class="btn" data-act="saveSheet" ${f.busySheet ? "disabled" : ""}>${f.busySheet ? "Mengecek file…" : "Pakai file ini"}</button>
     </div>
+    ${googleSettings()}
     <div class="section">
       <h2>Akun tim</h2>
       <p class="hint">Buat akun, reset password, atau nonaktifkan akun anggota tim.</p>
@@ -933,9 +1298,43 @@ function settingsView() {
   </div>`;
 }
 
+function googleSettings() {
+  const g = ui.gcfg;
+  const f = ui.form;
+  if (!g) return `<div class="section"><h2>Content Calendar dan EP</h2><p class="hint">Memuat…</p></div>`;
+  return `<div class="section">
+    <h2>Content Calendar dan EP</h2>
+    ${g.serviceAccount ? `<p class="hint">Tiap file baru dibagikan sebagai <b>Editor</b> ke email ini:</p>
+      <div class="row-link"><input type="text" id="saEmail" value="${esc(g.serviceAccount)}" readonly><button class="btn secondary inline" data-act="copySa">Salin</button></div>`
+      : `<p class="msg info">Akses Google belum diatur di server (secret GOOGLE_SA). Lihat panduan.</p>`}
+    <p class="hint">Sekarang: ${g.calendar ? esc(g.calendar.title) : "kalender belum diisi"}; ${g.ep ? esc(g.ep.title) : "EP belum diisi"}.</p>
+    <label for="gCal">Link Content Calendar (Google Sheets)</label><input type="url" id="gCal" value="${esc(f.gCal || "")}" placeholder="https://docs.google.com/spreadsheets/d/...">
+    <label for="gEp">Link EP (Google Slides)</label><input type="url" id="gEp" value="${esc(f.gEp || "")}" placeholder="https://docs.google.com/presentation/d/...">
+    <button class="btn" data-act="saveGoogle" ${f.busyG || !g.serviceAccount ? "disabled" : ""}>${f.busyG ? "Mengecek file…" : "Pakai link ini"}</button>
+  </div>`;
+}
+
 function bindSettings() {
   bindCommon();
-  keep(["sSheet", "pOld", "pNew"]);
+  keep(["sSheet", "pOld", "pNew", "gCal", "gEp"]);
+  if (isLead() && !ui.gcfg) api("/api/google").then((g) => { ui.gcfg = g; if (ui.view === "settings") render(); }).catch((e) => { ui.gcfg = { serviceAccount: "" }; ui.form.msg = e.message; ui.form.msgType = "err"; render(); });
+  on("copySa", () => { const el = $("saEmail"); el.select(); navigator.clipboard.writeText(el.value).catch(() => document.execCommand("copy")); setMsg("Email service account disalin.", "ok"); });
+  on("saveGoogle", async () => {
+    const calendarUrl = (ui.form.gCal || "").trim();
+    const epUrl = (ui.form.gEp || "").trim();
+    if (!calendarUrl && !epUrl) return setMsg("Tempel minimal satu link.", "err");
+    ui.form.busyG = true; render();
+    try {
+      const res = await api("/api/google", { calendarUrl, epUrl });
+      ui.gcfg = res;
+      const parts = [];
+      if (calendarUrl) parts.push(`Kalender: ${res.calendar.tabs.map((t) => t.account).join(" dan ")}, ${res.calendarRows} baris.`);
+      if (epUrl) parts.push(`EP: ${res.epItems} konten.`);
+      ui.form = { msg: `Tersimpan. ${parts.join(" ")}${(res.warnings || []).map((w) => ` ${w}`).join("")}`, msgType: "ok" };
+      await loadGoogle();
+    } catch (e) { ui.form.busyG = false; ui.form.msg = e.message; ui.form.msgType = "err"; }
+    render();
+  });
   on("logout", () => logout(""));
   on("openAccounts", () => { ui.view = "accounts"; ui.form = {}; ui.accounts = null; render(); loadAccounts(); });
   const login = $("sLogin");
@@ -1155,6 +1554,8 @@ async function init() {
   ui.settings = await window.aab.getSettings();
   $("tabRequest").addEventListener("click", () => { ui.tab = "request"; ui.view = "list"; ui.form = {}; render(); });
   $("tabInput").addEventListener("click", () => { ui.tab = "input"; ui.view = "list"; ui.form = {}; render(); if (isLead()) loadState(); });
+  $("tabEp").addEventListener("click", () => { ui.tab = "ep"; ui.view = "list"; ui.form = {}; render(); });
+  $("tabCal").addEventListener("click", () => { ui.tab = "cal"; ui.view = "list"; ui.form = {}; render(); });
   $("btnSettings").addEventListener("click", () => { if (!configured()) return; ui.view = "settings"; ui.form = {}; render(); });
   ui.update = await window.aab.getUpdate();
   window.aab.onUpdate((u) => { ui.update = u; renderBar(); if (ui.view === "settings") render(); });
@@ -1162,6 +1563,7 @@ async function init() {
   $("btnHide").addEventListener("click", () => window.aab.hide());
   $("btnPin").addEventListener("click", async () => { ui.settings = await window.aab.saveSettings({ pinned: !ui.settings.pinned }); renderBar(); });
   window.aab.onOpenRequest((id) => {
+    if (String(id || "").startsWith("ep:")) { ui.tab = "ep"; ui.epOpen = id.slice(3); ui.view = "detail"; ui.form = {}; render(); return; }
     ui.tab = "request";
     ui.openId = id;
     ui.view = id ? "detail" : "list";

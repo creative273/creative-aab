@@ -62,6 +62,16 @@ export default {
         "POST /api/config": ["lead", () => setConfig(env, body)],
         "POST /api/request/decision": ["lead", () => requestDecision(env, body, me)],
         "GET /api/dashboard": ["lead", () => dashboard(env)],
+        "GET /api/google": ["lead", () => googleConfigInfo(env)],
+        "POST /api/google": ["lead", () => setGoogleConfig(env, body)],
+        "GET /api/ep": ["all", () => getEp(env, me)],
+        "POST /api/ep/refresh": ["all", () => refreshEp(env).then(() => getEp(env, me))],
+        "POST /api/ep/decision": ["lead", () => epDecision(env, body, me)],
+        "POST /api/ep/posted": ["content", () => epPosted(env, body, me)],
+        "GET /api/calendar": ["content", () => getCalendar(env)],
+        "POST /api/calendar/refresh": ["content", () => refreshCalendar(env).then((c) => ({ ok: true, ...c }))],
+        "POST /api/calendar/save": ["content", () => calendarSave(env, body, me)],
+        "POST /api/calendar/toggle": ["content", () => calendarToggle(env, body, me)],
         "GET /api/accounts": ["lead", () => listAccounts(env)],
         "POST /api/accounts/save": ["lead", () => saveAccount(env, body)],
         "POST /api/accounts/delete": ["lead", () => deleteAccount(env, body)],
@@ -77,7 +87,7 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(refresh(env, { force: true }).catch(() => {}));
+    ctx.waitUntil(Promise.all([refresh(env, { force: true }).catch(() => {}), googleRefreshAll(env)]));
   },
 };
 
@@ -290,6 +300,19 @@ async function dashboard(env) {
   const accounts = Object.values(await getAccounts(env)).map(publicUser);
   const reqs = state.requests || [];
   const open = reqs.filter((r) => r.status !== "done");
+  const cal = await env.STORE.get("calcache", "json");
+  const ep = await env.STORE.get("epcache", "json");
+  const today = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10); // WIB
+  let epInfo = null;
+  if (ep && ep.configured) {
+    const dec = (await env.STORE.get(`epdec:${ep.id}`, "json")) || {};
+    epInfo = {
+      total: ep.items.length,
+      waiting: ep.items.filter((i) => !i.posted && !dec[i.id]).length,
+      revisi: ep.items.filter((i) => !i.posted && dec[i.id] && dec[i.id].status === "REVISI").length,
+      posted: ep.items.filter((i) => i.posted).length,
+    };
+  }
   return {
     ok: true,
     configured: !!state.configured,
@@ -303,6 +326,8 @@ async function dashboard(env) {
       inProgress: open.filter((r) => r.approved).length,
       done: reqs.filter((r) => r.status === "done").length,
     },
+    plan: cal && cal.configured ? weekPlan(cal.rows, today) : null,
+    ep: epInfo,
     last: log.last,
     activity: log.items,
     accounts,
@@ -691,6 +716,430 @@ async function checkRequestRow(env, cfg, body) {
     throw fail("Isi request di baris ini sudah berubah di sheet. Muat ulang widget lalu coba lagi.", 409);
   }
   return row;
+}
+
+// ---------- Google (Content Calendar dan EP) ----------
+// Akses lewat service account. Secret GOOGLE_SA berisi isi file JSON kunci service account.
+// Tiap file bulanan dibagikan (Editor) ke email service account itu.
+
+const GOOGLE_SCOPES = "https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/presentations";
+const CAL_FIRST_ROW = 4; // header di baris 3
+const CAL_LAST_ROW = 400;
+const EP_DECISIONS = ["OKE", "REVISI"];
+
+function serviceAccount(env) {
+  if (!env.GOOGLE_SA) throw fail("Akses Google belum diatur di server (secret GOOGLE_SA kosong).", 409);
+  try {
+    const sa = JSON.parse(env.GOOGLE_SA);
+    if (!sa.client_email || !sa.private_key) throw new Error();
+    return sa;
+  } catch {
+    throw fail("Secret GOOGLE_SA bukan file JSON service account yang benar.", 500);
+  }
+}
+
+async function googleToken(env) {
+  const cached = await env.STORE.get("google:token", "json");
+  if (cached && cached.expiresAt > Date.now() + 5 * 60 * 1000) return cached.token;
+  const sa = serviceAccount(env);
+  const now = Math.floor(Date.now() / 1000);
+  const enc = (o) => b64url(new TextEncoder().encode(JSON.stringify(o)));
+  const unsigned = `${enc({ alg: "RS256", typ: "JWT" })}.${enc({ iss: sa.client_email, scope: GOOGLE_SCOPES, aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 })}`;
+  const pem = sa.private_key.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+  const key = await crypto.subtle.importKey("pkcs8", b64ToBuf(pem), { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned));
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${unsigned}.${b64url(new Uint8Array(sig))}`,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!data.access_token) throw fail(`Login ke Google gagal: ${data.error_description || data.error || res.status}. Cek secret GOOGLE_SA.`, 502);
+  await env.STORE.put("google:token", JSON.stringify({ token: data.access_token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 }));
+  return data.access_token;
+}
+
+async function google(env, method, url, payload) {
+  const token = await googleToken(env);
+  const res = await fetch(url, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: payload ? JSON.stringify(payload) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const sa = serviceAccount(env).client_email;
+    if (res.status === 403 || res.status === 404) {
+      throw fail(`Google menolak akses (${res.status}). Bagikan file ini sebagai Editor ke ${sa}.`, 409);
+    }
+    throw fail(`Google error ${res.status}: ${(data.error && data.error.message) || "tidak diketahui"}`, 502);
+  }
+  return data;
+}
+
+const SHEETS = "https://sheets.googleapis.com/v4/spreadsheets";
+const SLIDES = "https://slides.googleapis.com/v1/presentations";
+
+export function parseGoogleId(url, kind) {
+  const m = String(url || "").match(kind === "sheet" ? /\/spreadsheets\/d\/([A-Za-z0-9_-]{20,})/ : /\/presentation\/d\/([A-Za-z0-9_-]{20,})/);
+  return m ? m[1] : null;
+}
+
+async function getGoogleConfig(env) {
+  return (await env.STORE.get("gconfig", "json")) || {};
+}
+
+async function googleConfigInfo(env) {
+  const g = await getGoogleConfig(env);
+  let email = "";
+  try { email = serviceAccount(env).client_email; } catch { email = ""; }
+  return { ok: true, serviceAccount: email, calendar: g.calendar || null, ep: g.ep || null };
+}
+
+async function setGoogleConfig(env, body) {
+  const g = await getGoogleConfig(env);
+  const warnings = [];
+  if (body.calendarUrl !== undefined && clean(body.calendarUrl)) {
+    const id = parseGoogleId(body.calendarUrl, "sheet");
+    if (!id) throw fail("Link Content Calendar harus link Google Sheets (docs.google.com/spreadsheets/d/...).");
+    const meta = await google(env, "GET", `${SHEETS}/${id}?fields=properties.title,sheets.properties(sheetId,title)`);
+    const titles = meta.sheets.map((s) => s.properties.title);
+    const heads = await google(env, "GET", `${SHEETS}/${id}/values:batchGet?${titles.map((t) => `ranges=${encodeURIComponent(`'${t}'!B3:M3`)}`).join("&")}`);
+    const tabs = [];
+    heads.valueRanges.forEach((vr, i) => {
+      const h = ((vr.values || [])[0] || []).map((x) => String(x).trim().toLowerCase());
+      if (h[0] === "#" && h[4] === "content" && h[5] === "date") tabs.push({ title: titles[i], account: titles[i].trim().split(/\s+/)[0].toUpperCase() });
+    });
+    if (!tabs.length) throw fail('Tidak ada tab content plan di file ini (header baris 3: # | Content Pillar | ... | Content | Date).');
+    let options = { pillars: [], formats: [], platforms: [] };
+    if (titles.includes("Settings")) {
+      const s = await google(env, "GET", `${SHEETS}/${id}/values:batchGet?ranges=${encodeURIComponent("Settings!C12:C40")}&ranges=${encodeURIComponent("Settings!G12:G40")}&ranges=${encodeURIComponent("Settings!K12:K40")}`);
+      const col = (vr) => (vr.values || []).map((r) => clean(r[0])).filter(Boolean);
+      options = { pillars: col(s.valueRanges[0]), formats: col(s.valueRanges[1]), platforms: col(s.valueRanges[2]) };
+    } else warnings.push("Tab Settings tidak ditemukan. Pilihan pillar dan format diketik manual.");
+    g.calendar = { id, title: meta.properties.title, tabs, options, setAt: new Date().toISOString() };
+  }
+  if (body.epUrl !== undefined && clean(body.epUrl)) {
+    const id = parseGoogleId(body.epUrl, "slides");
+    if (!id) throw fail("Link EP harus link Google Slides (docs.google.com/presentation/d/...).");
+    const meta = await google(env, "GET", `${SLIDES}/${id}?fields=title`);
+    g.ep = { id, title: meta.title, setAt: new Date().toISOString() };
+  }
+  await env.STORE.put("gconfig", JSON.stringify(g));
+  await env.STORE.delete("calcache");
+  await env.STORE.delete("epcache");
+  const out = { ...(await googleConfigInfo(env)), warnings };
+  if (g.calendar) out.calendarRows = (await refreshCalendar(env)).rows.length;
+  if (g.ep) out.epItems = (await refreshEp(env)).items.length;
+  return out;
+}
+
+// ----- Content Calendar -----
+
+const serialToISO = (n) => {
+  const d = new Date(Math.round((Number(n) - 25569) * 86400000));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+};
+
+export function parseCalendarRows(values, tab) {
+  const rows = [];
+  (values || []).forEach((r, i) => {
+    const row = CAL_FIRST_ROW + i;
+    const v = (k) => r[k] === undefined || r[k] === null ? "" : r[k];
+    const content = clean(v(4));
+    const date = typeof v(5) === "number" ? serialToISO(v(5)) : clean(v(5));
+    const pillar = clean(v(1)), format = clean(v(2)), platform = clean(v(3)), note = clean(v(6)), fa = clean(v(7)), link = clean(v(8));
+    if (!content && !date && !pillar && !format && !link && !fa) return;
+    rows.push({
+      id: `${tab.account}:${row}:${hash(`${content}|${date}`)}`,
+      tab: tab.title, account: tab.account, row, no: clean(v(0)),
+      pillar, format, platform, content, date, note, fa, link,
+      noPosting: /^no posting$/i.test(content),
+      take: v(9) === true, editing: v(10) === true, posting: v(11) === true,
+    });
+  });
+  return rows;
+}
+
+async function readCalendar(env, cal) {
+  const ranges = cal.tabs.map((t) => `ranges=${encodeURIComponent(`'${t.title}'!B${CAL_FIRST_ROW}:M${CAL_LAST_ROW}`)}`).join("&");
+  const data = await google(env, "GET", `${SHEETS}/${cal.id}/values:batchGet?${ranges}&valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=SERIAL_NUMBER`);
+  return cal.tabs.map((t, i) => ({ tab: t, values: data.valueRanges[i].values || [] }));
+}
+
+async function refreshCalendar(env) {
+  const g = await getGoogleConfig(env);
+  if (!g.calendar) return { configured: false, rows: [] };
+  const parts = await readCalendar(env, g.calendar);
+  const rows = parts.flatMap((p) => parseCalendarRows(p.values, p.tab));
+  const out = { configured: true, title: g.calendar.title, id: g.calendar.id, accounts: g.calendar.tabs.map((t) => t.account), options: g.calendar.options, rows, fetchedAt: new Date().toISOString() };
+  await env.STORE.put("calcache", JSON.stringify(out));
+  return out;
+}
+
+async function getCalendar(env) {
+  const c = await env.STORE.get("calcache", "json");
+  return { ok: true, ...(c || (await refreshCalendar(env))) };
+}
+
+function calendarValues(b) {
+  const noPosting = !!b.noPosting;
+  const date = clean(b.date);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw fail("Tanggal wajib diisi.");
+  const content = noPosting ? "NO POSTING" : clean(b.content);
+  if (!content) throw fail("Judul konten wajib diisi, atau pilih No posting.");
+  const t = (x) => (noPosting ? "" : clean(x));
+  return [t(b.pillar), t(b.format), t(b.platform), content, date, t(b.note), t(b.fa), t(b.link), noPosting ? false : !!b.take, noPosting ? false : !!b.editing, noPosting ? false : !!b.posting];
+}
+
+async function calendarSave(env, body, me) {
+  const g = await getGoogleConfig(env);
+  if (!g.calendar) throw fail("Link Content Calendar belum diisi. Ray isi di Pengaturan.", 409);
+  const tab = g.calendar.tabs.find((t) => t.account === clean(body.account).toUpperCase());
+  if (!tab) throw fail("Pilih akun AAB atau NUSANTARA.");
+  const vals = calendarValues(body);
+  const [part] = await readCalendar(env, { ...g.calendar, tabs: [tab] });
+  const existing = parseCalendarRows(part.values, tab);
+  let row;
+  if (body.id) {
+    const hit = existing.find((r) => r.id === body.id);
+    if (!hit) throw fail("Baris ini sudah berubah di sheet. Muat ulang lalu coba lagi.", 409);
+    row = hit.row;
+  } else {
+    const last = existing.reduce((m, r) => Math.max(m, r.row), CAL_FIRST_ROW - 1);
+    row = last + 1;
+    if (row > CAL_LAST_ROW) throw fail(`Tab ${tab.title} sudah penuh sampai baris ${CAL_LAST_ROW}.`);
+  }
+  await google(env, "POST", `${SHEETS}/${g.calendar.id}/values:batchUpdate`, {
+    valueInputOption: "USER_ENTERED",
+    data: [{ range: `'${tab.title}'!C${row}:M${row}`, values: [vals] }],
+  });
+  await logActivity(env, me, `Kalender ${tab.account}: ${body.id ? "ubah" : "tambah"} "${vals[3].slice(0, 50)}" (${vals[4]})`);
+  const cal = await refreshCalendar(env);
+  return { ok: true, row, calendar: cal };
+}
+
+async function calendarToggle(env, body, me) {
+  const g = await getGoogleConfig(env);
+  if (!g.calendar) throw fail("Link Content Calendar belum diisi.", 409);
+  const col = { take: "K", editing: "L", posting: "M" }[body.field];
+  if (!col) throw fail("Kolom tidak dikenal.");
+  const cal = await refreshCalendar(env);
+  const hit = cal.rows.find((r) => r.id === body.id);
+  if (!hit) throw fail("Baris ini sudah berubah di sheet. Muat ulang lalu coba lagi.", 409);
+  await google(env, "POST", `${SHEETS}/${g.calendar.id}/values:batchUpdate`, {
+    valueInputOption: "USER_ENTERED",
+    data: [{ range: `'${hit.tab}'!${col}${hit.row}`, values: [[!!body.value]] }],
+  });
+  return { ok: true, calendar: await refreshCalendar(env) };
+}
+
+// ----- EP (Google Slides) -----
+
+const BULAN_ID = { januari: 1, februari: 2, maret: 3, april: 4, mei: 5, juni: 6, juli: 7, agustus: 8, september: 9, oktober: 10, november: 11, desember: 12 };
+
+export function parseIndoDate(s) {
+  const m = String(s || "").toLowerCase().match(/(\d{1,2})\s+([a-z]+)\s+(\d{4})/);
+  if (!m || !BULAN_ID[m[2]]) return "";
+  return `${m[3]}-${String(BULAN_ID[m[2]]).padStart(2, "0")}-${String(+m[1]).padStart(2, "0")}`;
+}
+
+const textOf = (t) => ((t && t.textElements) || []).map((e) => (e.textRun ? e.textRun.content : "")).join("");
+
+function elementTexts(el, out) {
+  if (el.shape && el.shape.text) out.push({ id: el.objectId, text: textOf(el.shape.text), y: (el.transform && el.transform.translateY) || 0, x: (el.transform && el.transform.translateX) || 0 });
+  if (el.table) {
+    const cells = (el.table.tableRows || []).map((r) => (r.tableCells || []).map((c) => textOf(c.text).trim()).join("\n"));
+    out.push({ id: el.objectId, text: cells.join("\n"), y: (el.transform && el.transform.translateY) || 0, x: (el.transform && el.transform.translateX) || 0, table: true });
+  }
+  if (el.elementGroup) (el.elementGroup.children || []).forEach((c) => elementTexts(c, out));
+  return out;
+}
+
+const field = (text, re) => { const m = text.match(re); return m ? m[1].replace(/\s+/g, " ").trim() : ""; };
+
+export function parseEpSlides(slides) {
+  let section = "AAB";
+  const items = [];
+  for (const s of slides || []) {
+    const parts = (s.pageElements || []).flatMap((el) => elementTexts(el, []));
+    const all = parts.map((p) => p.text).join("\n");
+    const flat = all.replace(/\u000b/g, "\n");
+    if (!/FORMAT\s*:/i.test(flat)) {
+      const t = flat.trim().toUpperCase();
+      if (/^NUSANTARA$/.test(t)) section = "NUSANTARA";
+      else if (/^TEMPLATE$/.test(t)) section = "TEMPLATE";
+      else if (/EDITORIAL PLAN/.test(t)) section = "AAB";
+      continue;
+    }
+    if (section === "TEMPLATE") continue;
+    const posted = parts.some((p) => !p.table && p.text.trim().toUpperCase() === "POSTED");
+    const cover = field(flat, /(?:COVER|JUDUL)\s*:[ \t]*([^\n]*)/i);
+    const talentM = flat.match(/Talent\s*:[ \t]*\n?([^\n]*)/i);
+    const talent = talentM ? talentM[1].trim() : "";
+    const uploadRaw = field(flat, /Upload\s*:\s*([^\n]+)/i);
+    const blank = (x) => !x || /^[.…\-\s]*$/.test(x);
+    items.push({
+      id: s.objectId,
+      account: section,
+      format: field(flat, /FORMAT\s*:[ \t]*([^\n]*)/i),
+      cover: blank(cover) ? "" : cover,
+      talent: blank(talent) ? "" : talent,
+      uploadText: blank(uploadRaw) ? "" : uploadRaw,
+      date: parseIndoDate(uploadRaw),
+      reference: field(flat, /Reference\s*:\s*(https?:\/\/\S+)/i),
+      posted,
+      body: parts.filter((p) => p.text.trim().toUpperCase() !== "POSTED").sort((a, b) => a.y - b.y || a.x - b.x).map((p) => p.text.trim()).filter(Boolean).join("\n\n").slice(0, 4000),
+    });
+  }
+  return items;
+}
+
+const EP_FIELDS = "slides(objectId,pageElements(objectId,transform,shape(text(textElements(textRun(content)))),table(tableRows(tableCells(text(textElements(textRun(content)))))),elementGroup(children(objectId,transform,shape(text(textElements(textRun(content)))),table(tableRows(tableCells(text(textElements(textRun(content)))))),elementGroup(children(objectId,transform,shape(text(textElements(textRun(content))))))))))";
+
+async function refreshEp(env) {
+  const g = await getGoogleConfig(env);
+  if (!g.ep) return { configured: false, items: [] };
+  const pres = await google(env, "GET", `${SLIDES}/${g.ep.id}?fields=${encodeURIComponent(EP_FIELDS)}`);
+  const items = parseEpSlides(pres.slides);
+  const out = { configured: true, id: g.ep.id, title: g.ep.title, items, fetchedAt: new Date().toISOString() };
+  await env.STORE.put("epcache", JSON.stringify(out));
+  return out;
+}
+
+async function getEp(env, me) {
+  const c = (await env.STORE.get("epcache", "json")) || (await refreshEp(env));
+  if (!c.configured) return { ok: true, ...c };
+  const decisions = (await env.STORE.get(`epdec:${c.id}`, "json")) || {};
+  const lead = MEMBERS[me.member]?.block === "lead";
+  return {
+    ok: true,
+    ...c,
+    items: c.items.map((it) => ({ ...it, decision: decisions[it.id] || null })),
+    canDecide: lead,
+    canPost: lead || MEMBERS[me.member]?.block === "content",
+  };
+}
+
+async function epDecision(env, body, me) {
+  const g = await getGoogleConfig(env);
+  if (!g.ep) throw fail("Link EP belum diisi.", 409);
+  const status = clean(body.status).toUpperCase();
+  if (![...EP_DECISIONS, ""].includes(status)) throw fail("Status harus OKE atau REVISI.");
+  const note = clean(body.note).slice(0, 1000);
+  if (status === "REVISI" && !note) throw fail("Tulis catatan revisinya.");
+  const c = (await env.STORE.get("epcache", "json")) || (await refreshEp(env));
+  const item = c.items.find((x) => x.id === body.id);
+  if (!item) throw fail("Slide ini tidak ditemukan lagi di EP. Muat ulang.", 409);
+  const key = `epdec:${g.ep.id}`;
+  const decisions = (await env.STORE.get(key, "json")) || {};
+  if (status) decisions[item.id] = { status, note: status === "REVISI" ? note : "", at: new Date().toISOString(), by: me.username, seq: Date.now() };
+  else delete decisions[item.id];
+  await env.STORE.put(key, JSON.stringify(decisions));
+  await logActivity(env, me, `EP "${(item.cover || item.format).slice(0, 40)}": ${status || "status dihapus"}`);
+  return getEp(env, me);
+}
+
+// Stempel POSTED: salin gaya stempel POSTED yang sudah ada di presentasi.
+async function findPostedTemplate(env, presId) {
+  const key = `eptpl:${presId}`;
+  const cached = await env.STORE.get(key, "json");
+  if (cached) return cached;
+  const pres = await google(env, "GET", `${SLIDES}/${presId}?fields=${encodeURIComponent("slides(objectId,pageElements(objectId,size,transform,shape))")}`);
+  for (const s of pres.slides || []) {
+    for (const el of s.pageElements || []) {
+      if (el.shape && el.shape.text && textOf(el.shape.text).trim().toUpperCase() === "POSTED") {
+        await env.STORE.put(key, JSON.stringify(el), { expirationTtl: 7 * 86400 });
+        return el;
+      }
+    }
+  }
+  return null;
+}
+
+export function postedRequests(pageId, tpl) {
+  const id = `posted_${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
+  const size = tpl ? tpl.size : { width: { magnitude: 2400000, unit: "EMU" }, height: { magnitude: 600000, unit: "EMU" } };
+  const transform = tpl ? tpl.transform : { scaleX: 1, scaleY: 1, translateX: 6300000, translateY: 4300000, unit: "EMU" };
+  const reqs = [
+    { createShape: { objectId: id, shapeType: (tpl && tpl.shape.shapeType) || "TEXT_BOX", elementProperties: { pageObjectId: pageId, size, transform } } },
+    { insertText: { objectId: id, text: "POSTED" } },
+  ];
+  const run = tpl && (tpl.shape.text.textElements || []).find((e) => e.textRun && e.textRun.content.trim());
+  const style = run ? run.textRun.style || {} : { bold: true, fontSize: { magnitude: 28, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: { red: 0.85, green: 0.1, blue: 0.1 } } } };
+  const keys = ["bold", "italic", "underline", "fontFamily", "fontSize", "foregroundColor", "weightedFontFamily"].filter((k) => style[k] !== undefined);
+  if (keys.length) {
+    const s = {}; keys.forEach((k) => { s[k] = style[k]; });
+    reqs.push({ updateTextStyle: { objectId: id, style: s, fields: keys.join(","), textRange: { type: "ALL" } } });
+  }
+  const sp = tpl && tpl.shape.shapeProperties;
+  if (sp) {
+    const p = {}; const f = [];
+    for (const k of ["shapeBackgroundFill", "outline", "contentAlignment"]) {
+      if (sp[k] === undefined) continue;
+      const v = JSON.parse(JSON.stringify(sp[k]));
+      if (v && v.propertyState === undefined && (k === "shapeBackgroundFill" || k === "outline")) delete v.propertyState;
+      p[k] = v; f.push(k);
+    }
+    if (f.length) reqs.push({ updateShapeProperties: { objectId: id, shapeProperties: p, fields: f.join(",") } });
+  }
+  const para = tpl && (tpl.shape.text.textElements || []).find((e) => e.paragraphMarker && e.paragraphMarker.style && e.paragraphMarker.style.alignment);
+  reqs.push({ updateParagraphStyle: { objectId: id, style: { alignment: para ? para.paragraphMarker.style.alignment : "CENTER" }, fields: "alignment", textRange: { type: "ALL" } } });
+  return reqs;
+}
+
+async function epPosted(env, body, me) {
+  const g = await getGoogleConfig(env);
+  if (!g.ep) throw fail("Link EP belum diisi.", 409);
+  const link = clean(body.link);
+  if (link && !/^https?:\/\//i.test(link)) throw fail("Link post harus diawali https://");
+  const ep = await refreshEp(env);
+  const item = ep.items.find((x) => x.id === body.id);
+  if (!item) throw fail("Slide ini tidak ditemukan lagi di EP. Muat ulang.", 409);
+  let stamped = false;
+  if (!item.posted) {
+    const tpl = await findPostedTemplate(env, g.ep.id);
+    await google(env, "POST", `${SLIDES}/${g.ep.id}:batchUpdate`, { requests: postedRequests(item.id, tpl) });
+    stamped = true;
+  }
+  let calendarRow = null;
+  if (body.calendarId) {
+    if (!g.calendar) throw fail("Link Content Calendar belum diisi.", 409);
+    const cal = await refreshCalendar(env);
+    const hit = cal.rows.find((r) => r.id === body.calendarId);
+    if (!hit) throw fail("Baris kalender berubah. Muat ulang lalu coba lagi.", 409);
+    const data = [{ range: `'${hit.tab}'!M${hit.row}`, values: [[true]] }];
+    if (link) data.push({ range: `'${hit.tab}'!J${hit.row}`, values: [[link]] });
+    await google(env, "POST", `${SHEETS}/${g.calendar.id}/values:batchUpdate`, { valueInputOption: "USER_ENTERED", data });
+    calendarRow = hit.row;
+    await refreshCalendar(env);
+  }
+  await refreshEp(env);
+  await logActivity(env, me, `POSTED: "${(item.cover || item.format).slice(0, 40)}"`);
+  return { ok: true, stamped, calendarRow, ep: await getEp(env, me) };
+}
+
+async function googleRefreshAll(env) {
+  const g = await getGoogleConfig(env);
+  if (g.calendar) await refreshCalendar(env).catch(() => {});
+  if (g.ep) await refreshEp(env).catch(() => {});
+}
+
+// Ringkasan content plan minggu ini (Senin sampai Minggu, WIB) untuk dashboard Ray.
+export function weekPlan(rows, todayISO) {
+  const t = new Date(`${todayISO}T00:00:00Z`);
+  const dow = (t.getUTCDay() + 6) % 7;
+  const start = new Date(t.getTime() - dow * 864e5).toISOString().slice(0, 10);
+  const end = new Date(t.getTime() + (6 - dow) * 864e5).toISOString().slice(0, 10);
+  const inWeek = rows.filter((r) => r.date >= start && r.date <= end && !r.noPosting && r.content);
+  const by = {};
+  for (const r of inWeek) {
+    const a = (by[r.account] ||= { planned: 0, posted: 0, late: 0 });
+    a.planned++;
+    if (r.posting) a.posted++;
+    else if (r.date < todayISO) a.late++;
+  }
+  return { start, end, accounts: by };
 }
 
 // ---------- Helpers ----------

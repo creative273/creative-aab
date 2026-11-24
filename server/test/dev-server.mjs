@@ -2,6 +2,7 @@
 import worker, { colIndex } from "../worker.js";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { googleFetch, SA, CAL_ID, EP_ID } from "./google-mock.mjs";
 const SHEET = "PSUosgLcFh58JftjSZclS4FwgLe";
 const REPORT = "DkyyeC";
 const REQ = "0x35bD";
@@ -28,6 +29,8 @@ write(`${REQ}!A2:I4`, [[1,"04 November 2026","WIDI","Request logo plang","13 Nov
 write(`${REQ}!A5:A20`, Array.from({length:16},(_,i)=>[4+i]));
 
 globalThis.fetch = async (url, opts = {}) => {
+  const g = await googleFetch(url, opts);
+  if (g) return g;
   const u = new URL(url);
   const body = opts.body ? JSON.parse(opts.body) : null;
   calls.push(`${opts.method || "GET"} ${u.pathname}`);
@@ -49,7 +52,7 @@ globalThis.fetch = async (url, opts = {}) => {
 
 const kv = new Map();
 const env = {
-  LARK_APP_ID: "cli_test", LARK_APP_SECRET: "secret", ADMIN_PASSWORD: "admin-rahasia-123",
+  LARK_APP_ID: "cli_test", LARK_APP_SECRET: "secret", ADMIN_PASSWORD: "admin-rahasia-123", GOOGLE_SA: JSON.stringify(SA),
   STORE: { get: async (k, t) => { const v = kv.get(k); return v === undefined ? null : t === "json" ? JSON.parse(v) : v; }, put: async (k, v) => { kv.set(k, v); }, delete: async (k) => { kv.delete(k); } },
 };
 const call = async (method, path, body, key = "kunci-tim") => {
@@ -72,5 +75,6 @@ http.createServer(async (req, res) => {
   const go = async (path, body, tok) => (await worker.fetch(new Request("http://x" + path, { method: "POST", headers: { "Content-Type": "application/json", ...(tok ? { Authorization: "Bearer " + tok } : {}) }, body: JSON.stringify(body) }), env, {})).json();
   const { token } = await go("/api/login", { username: "ray", password: "admin-rahasia-123" });
   for (const [u, m] of [["zahra", "fitria"], ["aqil", "athallah"], ["albar", "albar"], ["rifqi", "rifqi"]]) await go("/api/accounts/save", { username: u, member: m, password: "password123" }, token);
+  if (process.env.WITH_GOOGLE) await go("/api/google", { calendarUrl: `https://docs.google.com/spreadsheets/d/${CAL_ID}/edit`, epUrl: `https://docs.google.com/presentation/d/${EP_ID}/edit` }, token);
   console.log("dev server :8787");
 });

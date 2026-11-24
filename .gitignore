@@ -2,3 +2,4 @@ node_modules/
 widget/release/
 widget/dist/
 *.zip
+widget/node_modules

@@ -231,6 +231,35 @@ textarea.info-box { min-height: 0; resize: vertical; }
 .acc-off .acc-head b { color: var(--ink-2); text-decoration: line-through; }
 .acc-actions { display: flex; gap: 14px; margin-top: 4px; }
 
+/* EP dan kalender */
+.list-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 14px 0; }
+.acc-seg { margin: 0; }
+.acc-seg button { padding: 4px 10px; font-size: 12px; }
+.detail-title { font-size: 16px; font-weight: 700; margin: 0 0 10px; }
+.btn.as-link { text-align: center; text-decoration: none; }
+.ep-body summary { cursor: pointer; font-size: 13px; color: var(--ink-2); }
+.ep-body .detail-info { margin-top: 8px; font-size: 13px; }
+.pad-x { padding: 0 14px; }
+.pad-x .btn { margin-top: 10px; }
+.cal-list { list-style: none; margin: 0; padding: 4px 0 16px; }
+.cal-date { padding: 12px 14px 4px; font-size: 12px; font-weight: 700; color: var(--accent-2); }
+.cal-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 6px 14px; border-bottom: 1px solid var(--line); }
+.cal-main { text-align: left; border: 0; background: transparent; padding: 2px 0; min-width: 0; }
+.cal-main:hover .cal-title { text-decoration: underline; }
+.cal-title { display: block; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.cal-meta { display: block; font-size: 12px; color: var(--ink-2); }
+.cal-off .cal-title { color: var(--ink-2); font-weight: 400; letter-spacing: .04em; }
+.cal-checks { display: flex; gap: 4px; align-items: center; }
+.cal-checks button { border: 1px solid var(--line-strong); background: var(--card); border-radius: 6px; padding: 3px 6px; font-size: 11px; color: var(--ink-2); }
+.cal-checks button[aria-pressed="true"] { background: var(--ok-bg); color: var(--ok-ink); border-color: #2F6B4F; }
+.cal-link { font-size: 11px; margin-left: 2px; }
+.cal-checks-form { margin-top: 12px; }
+.cal-checks-form button { flex: 1; padding: 6px; }
+.cal-checks-form button[aria-pressed="true"] { background: var(--ok-bg); color: var(--ok-ink); border-color: #2F6B4F; }
+.req-stats.plan { grid-template-columns: repeat(2, 1fr); }
+.plan-acc { display: block; font-size: 11px; font-weight: 700; color: var(--accent-2); letter-spacing: .03em; }
+.plan-late { display: block; color: var(--warn-ink); margin-top: 2px; }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }

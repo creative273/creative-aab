@@ -82,11 +82,26 @@ Akses dicek di server, bukan hanya disembunyikan di tampilan. Satu anggota satu 
 - **Salah password 5 kali:** akun dikunci 15 menit.
 - **Ray lupa password:** login dengan `ADMIN_PASSWORD` dari Cloudflare. Kalau itu juga lupa, ganti nilai `ADMIN_PASSWORD` di Cloudflare lalu login dengan nilai baru.
 
+## F. Google: Content Calendar dan EP (mulai versi 1.2)
+
+Widget membaca dan menulis Content Calendar (Google Sheets) dan EP (Google Slides) lewat **service account**, yaitu akun Google khusus untuk server. Cukup diatur sekali.
+
+1. Buka https://console.cloud.google.com dengan akun yang memiliki file Content Calendar dan EP (misalnya creative@agensianakbangsa.com). Buat project baru, beri nama `creative-aab`.
+2. **APIs & Services → Library**: cari dan klik **Enable** untuk **Google Sheets API**, lalu untuk **Google Slides API**.
+3. **IAM & Admin → Service Accounts → Create service account**. Isi nama `creative-aab-widget`, klik **Create and continue**, lewati pemberian role, lalu klik **Done**.
+4. Klik service account yang baru dibuat → tab **Keys** → **Add key → Create new key → JSON**. Sebuah file `.json` terunduh.
+   Kalau muncul pesan bahwa pembuatan key diblokir kebijakan organisasi, admin Google Workspace kantor perlu mengizinkannya dulu.
+5. Cloudflare → Worker `creative-aab` → **Settings → Variables and Secrets → Add**: nama `GOOGLE_SA`, tipe **Secret**, nilainya seluruh isi file `.json` tadi (buka dengan Notepad, salin semua). Simpan, lalu **Deploy**.
+6. **Penting:** file `.json` itu adalah kunci penuh ke file yang dibagikan. Jangan kirim lewat chat atau email. Setelah ditempel ke Cloudflare, hapus file itu dari laptop dan kosongkan Recycle Bin.
+7. Bagikan file ke service account. Buka folder induk di Google Drive tempat folder bulanan dibuat (folder yang berisi `11. NOVEMBER` dan seterusnya) → **Share** → tempel email service account (bentuknya `creative-aab-widget@....iam.gserviceaccount.com`, tampil juga di Pengaturan widget Ray) → **Editor** → hilangkan centang Notify → **Share**. File di dalam folder itu, termasuk bulan-bulan berikutnya, otomatis ikut.
+8. Di widget Ray: **Pengaturan → Content Calendar dan EP**, tempel link Content Calendar dan link EP bulan ini, lalu klik **Pakai link ini**.
+
 ## E. Rutinitas tiap awal bulan
 
 1. Duplikat file seperti biasa.
 2. Tambahkan app ke file baru (langkah B1). Blok AIGC ikut terbawa saat diduplikat.
 3. Di widget Ray: **Pengaturan → Link sheet bulan ini**, tempel link baru, lalu klik **Pakai file ini**. Semua laptop otomatis ikut.
+4. Buat Content Calendar dan EP bulan baru seperti biasa (di dalam folder bulanan). Di widget Ray: **Pengaturan → Content Calendar dan EP**, tempel kedua link baru, lalu klik **Pakai link ini**. Kalau file dibuat di luar folder induk yang sudah dibagikan (langkah F7), bagikan dulu ke email service account.
 
 ## Cara kerja per orang
 
@@ -97,6 +112,14 @@ Akses dicek di server, bukan hanya disembunyikan di tampilan. Satu anggota satu 
 | Muhammad Albar | VIDEO (S:V) | Sama seperti DESIGN, termasuk Import dari Excel. Per input bisa tempel link video, lalu SS diambil otomatis, atau tarik SS manual. Link ditulis di kolom Informasi Detil karena blok VIDEO tidak punya kolom link. |
 | Rifqi Firega | AIGC (AH:AK) | Tanggal, jumlah produksi, jumlah upload. Tanggal yang sama dikirim ulang akan ditimpa. |
 | Ray Sangkhylang | Lead | Melihat semua request dan memutuskan Approve, Pending, atau Reject. Tab **Dashboard**: angka KPI per orang, kapan terakhir input, jumlah request per status, dan aktivitas terbaru dari widget. |
+
+## Alur EP dan Content Calendar (versi 1.2)
+
+- **Tab EP** (semua akun): daftar konten dari Google Slides EP bulan ini, per akun AAB atau NUSANTARA, dengan filter Minggu ini, Menunggu, Revisi, Semua. Klik satu konten untuk melihat isi slide atau membukanya di Slides.
+- **Approval EP pindah ke widget.** Ray membuka konten lalu klik **OKE**, atau **Revisi** dengan catatan. Tim langsung melihat statusnya dan mendapat pop-up. Komentar di Slides tidak dipakai lagi untuk approval. Isi EP tetap ditulis di Slides.
+- **POSTED** (Zahra atau Ray): buka konten di tab EP → isi link post → pilih baris Content Calendar (sudah dipilihkan otomatis kalau tanggal dan judulnya cocok) → **Tandai POSTED**. Widget menempel stempel POSTED di slide dengan gaya yang sama seperti stempel yang sudah ada, mencentang POSTING, dan mengisi Link Post di kalender. Stempel POSTED yang ditempel manual di Slides tetap terbaca.
+- **Tab Kalender** (Zahra dan Ray): isi Content Calendar per akun. **+ Tambah ke kalender** untuk konten baru atau hari **No posting**. Klik judul untuk mengubah. Tombol Take, Edit, Post langsung mencentang TAKE, EDITING, POSTING di sheet. Baris baru masuk ke baris kosong pertama di bawah baris terakhir, kolom nomor (#) dan rumus di sheet tidak disentuh.
+- **Dashboard Ray** menampilkan content plan minggu ini (sudah posting dari total, dan yang lewat tanggal) serta jumlah EP menunggu, revisi, dan posted.
 
 ## Alur request creative
 
@@ -123,6 +146,10 @@ Data yang sudah masuk ke sheet tetap ada.
 | "Username atau password salah" | Cek ejaan. Minta Ray reset password kalau lupa. |
 | "Sesi habis. Login lagi." | Ray mereset password atau menonaktifkan akun itu. Login dengan password terbaru. |
 | "Akun kamu tidak punya akses ke fitur ini" | Akun terhubung ke anggota yang salah. Ray hapus lalu buat ulang akunnya. |
+| "Google menolak akses (403/404). Bagikan file ini sebagai Editor ke ..." | File belum dibagikan ke service account. Ulangi langkah F7 untuk file itu. |
+| "Akses Google belum diatur di server (secret GOOGLE_SA kosong)" | Langkah F5 belum dilakukan, atau Worker belum di-Deploy ulang. |
+| "Login ke Google gagal" | Isi `GOOGLE_SA` tidak lengkap. Tempel ulang seluruh isi file JSON. |
+| "Tidak ada tab content plan di file ini" | Link yang ditempel bukan file Content Calendar, atau header baris 3 berubah (# , Content Pillar, Format, Platform, Content, Date). |
 | "Cek pembaruan gagal" | Biasanya internet. Kalau terus muncul, unduh installer terbaru dari halaman Releases dan pasang di atas versi lama. |
 | "Login ke Lark gagal" | App ID atau App Secret di Cloudflare salah, atau app belum di-publish (langkah A4). |
 | "Lark menolak … App belum punya akses ke file ini" | Ulangi langkah B1 untuk file bulan ini. |
