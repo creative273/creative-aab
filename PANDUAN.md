@@ -65,6 +65,8 @@ Urutan setup: **A. Lark → B. Sheet → C. Cloudflare → D. Widget**. Cukup se
 
 Widget otomatis terbuka saat Windows menyala. Tombol − menyembunyikannya ke tray (ikon CRE di pojok kanan bawah, di dekat jam).
 
+**Pembaruan data:** server mengecek sheet tiap 10 menit, widget mengambil data dari server tiap 5 menit dan saat jendela dibuka (paling sering sekali per menit). Tombol muat ulang hanya ada di widget Ray, dan dalam satu menit hanya satu kali yang benar-benar mengecek sheet, berapa kali pun diklik. Kalau batas gratis harian Cloudflare tercapai, widget menampilkan pesan dan berhenti mengirim request sampai jam 07.00 WIB. Data di sheet tidak terpengaruh.
+
 ## Akun dan akses
 
 | Akun | Akses |

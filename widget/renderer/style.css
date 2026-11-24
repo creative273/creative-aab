@@ -64,6 +64,7 @@ a { color: var(--amber-ink); }
 .bar-title { font-weight: 700; font-size: 15px; white-space: nowrap; }
 .bar-sub { flex: 1; min-width: 0; color: var(--accent-2); font-size: 13px; margin-left: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bar-space { flex: 0; }
+.icon-btn[hidden] { display: none; }
 .icon-btn {
   -webkit-app-region: no-drag;
   width: 32px; height: 32px;

@@ -228,8 +228,7 @@ r = await call("GET", "/api/state", null, T.zahra);
 assert.ok(r.data.requests.every((x) => x.approved), "tim hanya dapat request approve");
 const rayState = await call("GET", "/api/state");
 assert.ok(rayState.data.requests.length > r.data.requests.length);
-r = await call("POST", "/api/refresh", {}, T.zahra);
-assert.ok(r.data.requests.every((x) => x.approved));
+assert.equal((await call("POST", "/api/refresh", {}, T.zahra)).status, 403, "refresh hanya Ray");
 
 // 14. Dashboard Ray
 r = await call("GET", "/api/dashboard");

@@ -48,7 +48,7 @@ export default {
       // Siapa boleh apa. "all" = semua akun aktif. Nama blok = pemilik blok itu. Ray (lead) boleh semua.
       const R = {
         "GET /api/state": ["all", () => getState(env, me)],
-        "POST /api/refresh": ["all", () => refresh(env, { force: false }).then((s) => forUser(s, me))],
+        "POST /api/refresh": ["lead", () => refresh(env, { force: false }).then((s) => forUser(s, me))],
         "GET /api/me": ["all", () => ({ ok: true, user: publicUser(me) })],
         "POST /api/password": ["all", () => changeOwnPassword(env, me, body)],
         "POST /api/request/done": ["all", () => requestDone(env, body, me)],
