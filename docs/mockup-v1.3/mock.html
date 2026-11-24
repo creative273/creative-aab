@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>Creative AAB v1.3 mockup</title>
+<style>
+:root {
+  --accent: #5B9BE6;
+  --accent-2: #8BBAF2;
+  --ink: #EEF3FA;
+  --ink-2: #A9B8CC;
+  --ink-3: #7D8DA3;
+  --glass: rgba(255, 255, 255, .055);
+  --glass-2: rgba(255, 255, 255, .09);
+  --edge: rgba(255, 255, 255, .13);
+  --edge-hi: rgba(255, 255, 255, .22);
+  --ok: #8FE3B5; --ok-bg: rgba(52, 168, 110, .18);
+  --warn: #FFB4BB; --warn-bg: rgba(220, 80, 95, .18);
+  --amber: #F3C77A; --amber-bg: rgba(230, 170, 60, .18);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", Inter, sans-serif;
+  color: var(--ink);
+  background: #0A1426 url(wall.jpg) center / cover no-repeat;
+  -webkit-font-smoothing: antialiased;
+}
+.win { position: fixed; inset: 0; display: grid; grid-template-columns: 248px 1fr; gap: 14px; padding: 14px; }
+.glass {
+  background: linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.035));
+  backdrop-filter: blur(28px) saturate(150%);
+  border: 1px solid var(--edge);
+  box-shadow: inset 0 1px 0 var(--edge-hi), 0 10px 30px rgba(0, 0, 0, .25);
+  border-radius: 18px;
+}
+/* Sidebar */
+.side { display: flex; flex-direction: column; padding: 14px 10px; border-radius: 22px; }
+.me { display: flex; gap: 10px; align-items: center; padding: 6px 8px 14px; }
+.avatar { width: 40px; height: 40px; border-radius: 50%; flex: none; display: grid; place-items: center; font-weight: 700; color: #08111D; background: linear-gradient(135deg, var(--accent-2), var(--accent)); box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+.avatar.sm { width: 26px; height: 26px; font-size: 11px; box-shadow: none; }
+.me b { display: block; font-size: 14px; }
+.me small { color: var(--ink-2); font-size: 12px; }
+.search { display: flex; align-items: center; gap: 8px; margin: 0 4px 14px; padding: 7px 10px; border-radius: 10px; background: rgba(0,0,0,.18); border: 1px solid rgba(255,255,255,.07); color: var(--ink-3); font-size: 13px; }
+.search kbd { margin-left: auto; font: 11px Inter, sans-serif; color: var(--ink-3); }
+.group { font-size: 11px; font-weight: 600; color: var(--ink-3); letter-spacing: .04em; margin: 10px 10px 6px; }
+.nav { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; color: var(--ink-2); font-size: 13.5px; }
+.nav .ic { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; }
+.nav .ic svg { width: 15px; height: 15px; }
+.nav .badge { margin-left: auto; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: rgba(255,255,255,.1); color: var(--ink); }
+.nav.on { background: rgba(255,255,255,.1); color: var(--ink); box-shadow: inset 0 1px 0 rgba(255,255,255,.12); }
+.nav.on .badge { background: var(--accent); color: #08111D; }
+.side-foot { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px 8px 2px; border-top: 1px solid rgba(255,255,255,.08); }
+.side-foot img { width: 30px; height: 30px; border-radius: 8px; }
+.side-foot small { display: block; color: var(--ink-3); font-size: 11px; }
+.side-foot .mini { margin-left: auto; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; border: 1px solid var(--edge); color: var(--ink-2); }
+/* Main */
+.main { overflow: hidden; display: flex; flex-direction: column; gap: 14px; }
+.head { display: flex; align-items: flex-end; gap: 12px; padding: 4px 6px 0; }
+.head h1 { font-size: 28px; line-height: 1.1; margin: 0; font-weight: 700; letter-spacing: -.01em; }
+.head p { margin: 4px 0 0; color: var(--ink-2); font-size: 13px; }
+.head .tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.pill-tabs { display: flex; padding: 3px; border-radius: 999px; background: rgba(0,0,0,.2); border: 1px solid rgba(255,255,255,.08); }
+.pill-tabs span { padding: 5px 13px; border-radius: 999px; font-size: 12.5px; color: var(--ink-2); }
+.pill-tabs span.on { background: rgba(255,255,255,.14); color: var(--ink); box-shadow: inset 0 1px 0 rgba(255,255,255,.18); }
+.round { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; border: 1px solid var(--edge); background: rgba(255,255,255,.06); color: var(--ink-2); }
+.round svg { width: 16px; height: 16px; }
+.round.acc { background: var(--accent); color: #08111D; border-color: transparent; }
+.grid { display: grid; gap: 14px; }
+.kpis { grid-template-columns: repeat(4, 1fr); }
+.kpi { padding: 14px 16px 12px; display: flex; flex-direction: column; min-height: 140px; }
+.kpi-top { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); }
+.kpi-top b { color: var(--ink); font-weight: 600; }
+.kpi-num { font-size: 32px; font-weight: 700; margin-top: 8px; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.kpi-num small { font-size: 13px; color: var(--ink-2); font-weight: 500; margin-left: 4px; }
+.delta { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--ok-bg); color: var(--ok); margin-left: 6px; vertical-align: 4px; }
+.kpi .spark { margin-top: auto; height: 34px; }
+.kpi-foot { font-size: 11.5px; color: var(--ink-3); margin-top: 6px; }
+.row { grid-template-columns: 1.05fr 1.35fr; }
+.card { padding: 16px 18px; }
+.card h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+.card h2 small { margin-left: auto; font-size: 12px; color: var(--ink-3); font-weight: 400; }
+.todo { display: flex; flex-direction: column; gap: 4px; }
+.todo-item { display: grid; grid-template-columns: 30px 1fr auto; gap: 10px; align-items: center; padding: 9px 10px; border-radius: 12px; background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.06); }
+.todo-item .n { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+.todo-item b { display: block; font-size: 13.5px; }
+.todo-item small { color: var(--ink-2); font-size: 12px; }
+.btn { font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--edge); background: rgba(255,255,255,.08); color: var(--ink); white-space: nowrap; }
+.btn.acc { background: var(--accent); color: #08111D; border-color: transparent; }
+.n.red { background: var(--warn-bg); color: var(--warn); }
+.n.amb { background: var(--amber-bg); color: var(--amber); }
+.n.blu { background: rgba(91,155,230,.2); color: var(--accent-2); }
+.chart { height: 190px; display: grid; grid-template-columns: repeat(7, 1fr); gap: 14px; align-items: end; padding: 0 4px; border-bottom: 1px solid rgba(255,255,255,.08); }
+.bar { display: flex; flex-direction: column-reverse; border-radius: 7px; overflow: hidden; }
+.bar i { display: block; }
+.axis { display: grid; grid-template-columns: repeat(7, 1fr); gap: 14px; padding: 6px 4px 0; font-size: 11px; color: var(--ink-3); text-align: center; }
+.legend { display: flex; gap: 14px; margin-top: 12px; font-size: 12px; color: var(--ink-2); }
+.legend span::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; background: var(--c); vertical-align: -1px; }
+.row3 { grid-template-columns: 1fr 1fr 1.1fr; }
+.plan { display: flex; flex-direction: column; gap: 12px; }
+.plan-line { display: grid; grid-template-columns: 86px 1fr 46px; align-items: center; gap: 10px; font-size: 13px; }
+.track { height: 8px; border-radius: 99px; background: rgba(255,255,255,.08); overflow: hidden; }
+.track i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.plan-line em { font-style: normal; color: var(--ink-2); text-align: right; font-variant-numeric: tabular-nums; }
+.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 4px; }
+.day { text-align: center; padding: 6px 0; border-radius: 9px; background: rgba(255,255,255,.04); font-size: 11px; color: var(--ink-3); }
+.day b { display: block; font-size: 15px; color: var(--ink); }
+.day.today { background: rgba(91,155,230,.22); box-shadow: inset 0 0 0 1px rgba(139,186,242,.5); }
+.dots { display: flex; justify-content: center; gap: 3px; margin-top: 3px; height: 5px; }
+.dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); }
+.dots i.p { background: rgba(255,255,255,.3); }
+.dots i.x { background: rgba(255,255,255,.12); width: 10px; border-radius: 3px; }
+.act { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.act li { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: center; font-size: 13px; }
+.act span { color: var(--ink-2); font-size: 12px; }
+.ep-stat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ep-stat div { padding: 10px; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.06); font-size: 12px; color: var(--ink-2); }
+.ep-stat b { display: block; font-size: 22px; color: var(--ink); font-variant-numeric: tabular-nums; }
+.next { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.next div { display: flex; justify-content: space-between; font-size: 13px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.035); }
+.tag { font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+.tag.ok { background: var(--ok-bg); color: var(--ok); }
+.tag.rev { background: var(--warn-bg); color: var(--warn); }
+.tag.wait { border: 1px solid rgba(255,255,255,.22); color: var(--ink-2); }
+/* EP screen */
+.ep-wrap { display: grid; grid-template-columns: 330px 1fr; gap: 14px; flex: 1; min-height: 0; }
+.ep-list { padding: 12px; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+.ep-item { padding: 10px 12px; border-radius: 12px; border: 1px solid transparent; }
+.ep-item b { display: block; font-size: 13.5px; }
+.ep-item small { color: var(--ink-2); font-size: 12px; display: flex; justify-content: space-between; margin-top: 3px; }
+.ep-item.on { background: rgba(255,255,255,.1); border-color: var(--edge); box-shadow: inset 0 1px 0 rgba(255,255,255,.12); }
+.ep-date { font-size: 11px; font-weight: 700; color: var(--accent-2); margin: 8px 12px 2px; letter-spacing: .03em; }
+.ep-detail { padding: 18px 20px; display: grid; grid-template-columns: 1fr 300px; gap: 18px; min-height: 0; }
+.slide { border-radius: 12px; overflow: hidden; border: 1px solid var(--edge); aspect-ratio: 16 / 9; background: #F6F1E7; color: #222; display: grid; grid-template-columns: 1fr 1.4fr; font: 11px/1.4 Inter, sans-serif; }
+.slide .l { padding: 18px; border-right: 2px solid #ddd; }
+.slide .l b { font-size: 12px; display: block; margin-bottom: 6px; }
+.slide .r { display: grid; grid-template-rows: 26px 1fr; }
+.slide .r .h { display: grid; grid-template-columns: 1fr 1fr; background: #E8DFD0; font-weight: 700; text-align: center; align-items: center; }
+.slide .r .b { display: grid; grid-template-columns: 1fr 1fr; }
+.slide .r .b div { padding: 12px; border-right: 1px solid #e3dccf; }
+.ph { margin-top: 10px; height: 120px; border-radius: 6px; background: linear-gradient(135deg, #c9d6e8, #e9eef6); display: grid; place-items: center; color: #6a7a90; }
+.side-panel { display: flex; flex-direction: column; gap: 12px; }
+.facts { display: grid; grid-template-columns: 74px 1fr; gap: 7px 10px; font-size: 13px; margin: 0; }
+.facts dt { color: var(--ink-3); }
+.facts dd { margin: 0; }
+.seg2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.seg2 span { text-align: center; padding: 8px; border-radius: 10px; border: 1px solid var(--edge); font-weight: 600; font-size: 13px; }
+.seg2 .ok { background: var(--ok-bg); color: var(--ok); border-color: rgba(143,227,181,.35); }
+textarea { width: 100%; min-height: 78px; border-radius: 10px; border: 1px solid var(--edge); background: rgba(0,0,0,.2); color: var(--ink); padding: 9px 10px; font: inherit; font-size: 13px; resize: none; }
+.label { font-size: 12px; color: var(--ink-2); margin-bottom: -6px; }
+/* Personalisasi */
+.set-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+.sw { width: 34px; height: 34px; border-radius: 50%; background: var(--c); box-shadow: inset 0 1px 0 rgba(255,255,255,.3); position: relative; }
+.sw.on { box-shadow: 0 0 0 2px #0A1426, 0 0 0 4px var(--ink); }
+.sw.custom { background: conic-gradient(#f66, #fd6, #6f8, #6df, #96f, #f6c, #f66); }
+.slider { height: 6px; border-radius: 99px; background: linear-gradient(90deg, rgba(255,255,255,.08), var(--accent)); position: relative; margin: 14px 0 6px; }
+.slider i { position: absolute; left: 62%; top: -6px; width: 18px; height: 18px; border-radius: 50%; background: var(--ink); box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+.photo { display: flex; gap: 16px; align-items: center; }
+.photo .big { width: 88px; height: 88px; font-size: 30px; }
+.opt { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.07); font-size: 13.5px; }
+.opt small { display: block; color: var(--ink-3); font-size: 12px; }
+.toggle { width: 38px; height: 22px; border-radius: 99px; background: var(--accent); position: relative; flex: none; }
+.toggle::after { content: ""; position: absolute; right: 3px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; }
+.toggle.off { background: rgba(255,255,255,.15); }
+.toggle.off::after { left: 3px; right: auto; }
+.preview-mini { margin-top: 12px; display: flex; gap: 10px; }
+.preview-mini div { flex: 1; height: 70px; border-radius: 12px; border: 1px solid var(--edge); background: rgba(255,255,255,.05); position: relative; overflow: hidden; }
+.preview-mini div::after { content: ""; position: absolute; left: 10px; bottom: 10px; width: 46%; height: 8px; border-radius: 99px; background: var(--accent); }
+.note { font-size: 12px; color: var(--ink-3); margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="win">
+  <aside class="side glass">
+    <div class="me">
+      <div class="avatar">R</div>
+      <div><b>Ray Sangkhylang</b><small>Creative Lead</small></div>
+    </div>
+    <div class="search"><svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="9" r="6"/><path d="M14 14l4 4"/></svg>Cari<kbd>Ctrl K</kbd></div>
+    <div class="group">HARIAN</div>
+    <div class="nav" data-n="ringkasan"><span class="ic" style="background:rgba(91,155,230,.22);color:#8BBAF2"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="11" y="3" width="6" height="6" rx="1.5"/><rect x="3" y="11" width="6" height="6" rx="1.5"/><rect x="11" y="11" width="6" height="6" rx="1.5"/></svg></span>Ringkasan</div>
+    <div class="nav" data-n="request"><span class="ic" style="background:rgba(243,199,122,.2);color:#F3C77A"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h12M4 10h12M4 15h7"/></svg></span>Request creative<span class="badge">3</span></div>
+    <div class="nav" data-n="kpi"><span class="ic" style="background:rgba(143,227,181,.18);color:#8FE3B5"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 16V9M10 16V4M16 16v-5"/></svg></span>KPI tim</div>
+    <div class="group">KONTEN</div>
+    <div class="nav" data-n="ep"><span class="ic" style="background:rgba(255,180,187,.18);color:#FFB4BB"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="14" height="10" rx="2"/><path d="M7 17h6"/></svg></span>Editorial plan<span class="badge">2</span></div>
+    <div class="nav" data-n="kalender"><span class="ic" style="background:rgba(185,160,255,.2);color:#C9B6FF"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="14" height="13" rx="2"/><path d="M3 8h14M7 2v4M13 2v4"/></svg></span>Kalender konten</div>
+    <div class="group">TIM</div>
+    <div class="nav" data-n="akun"><span class="ic" style="background:rgba(255,255,255,.1);color:#D6E0EC"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="7" cy="7" r="3"/><circle cx="14" cy="8" r="2.5"/><path d="M2 17c0-3 2.5-5 5-5s5 2 5 5M12 13c3 0 6 1.5 6 4"/></svg></span>Akun tim</div>
+    <div class="nav" data-n="pengaturan"><span class="ic" style="background:rgba(255,255,255,.1);color:#D6E0EC"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6"/></svg></span>Pengaturan</div>
+    <div class="side-foot">
+      <img src="logo.png" alt="">
+      <div><b style="font-size:13px">Creative AAB</b><small>v1.3 · data 2 menit lalu</small></div>
+      <span class="mini" title="Mode widget kecil"><svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="14" height="14" rx="2"/><rect x="10" y="10" width="7" height="7" rx="1.5" fill="currentColor" stroke="none"/></svg></span>
+    </div>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+
+<template id="ringkasan">
+  <div class="head">
+    <div><h1>Selamat pagi, Ray</h1><p>Rabu, 25 November 2026 · GMV CAMPAIGN NOVEMBER 2026</p></div>
+    <div class="tools">
+      <div class="pill-tabs"><span>Hari ini</span><span class="on">Minggu ini</span><span>Bulan ini</span></div>
+      <span class="round"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 10a6 6 0 1 1-1.8-4.3"/><path d="M16 3.5V7h-3.5"/></svg></span>
+      <span class="round"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 8a5 5 0 0 1 10 0v4l2 2H3l2-2z"/><path d="M8 17h4"/></svg></span>
+    </div>
+  </div>
+  <div class="grid kpis">
+    <div class="kpi glass"><div class="kpi-top"><span class="avatar sm">Z</span><b>Zahra</b> · Konten IG</div><div class="kpi-num">31<span class="delta">+6 minggu ini</span></div>
+      <svg class="spark" viewBox="0 0 200 34" preserveAspectRatio="none"><path d="M0 26 L30 22 L60 24 L90 14 L120 18 L150 9 L200 6" fill="none" stroke="var(--accent-2)" stroke-width="2"/></svg><div class="kpi-foot">Input terakhir 1 jam lalu</div></div>
+    <div class="kpi glass"><div class="kpi-top"><span class="avatar sm">A</span><b>Aqil</b> · Desain</div><div class="kpi-num">18<span class="delta">+4</span></div>
+      <svg class="spark" viewBox="0 0 200 34" preserveAspectRatio="none"><path d="M0 28 L30 26 L60 18 L90 20 L120 12 L150 14 L200 8" fill="none" stroke="#8FE3B5" stroke-width="2"/></svg><div class="kpi-foot">Input terakhir 3 jam lalu</div></div>
+    <div class="kpi glass"><div class="kpi-top"><span class="avatar sm">A</span><b>Albar</b> · Video</div><div class="kpi-num">12<span class="delta">+2</span></div>
+      <svg class="spark" viewBox="0 0 200 34" preserveAspectRatio="none"><path d="M0 24 L30 24 L60 20 L90 22 L120 16 L150 17 L200 12" fill="none" stroke="#F3C77A" stroke-width="2"/></svg><div class="kpi-foot">Input terakhir kemarin</div></div>
+    <div class="kpi glass"><div class="kpi-top"><span class="avatar sm">R</span><b>Rifqi</b> · AIGC</div><div class="kpi-num">64<small>produksi · 52 upload</small></div>
+      <svg class="spark" viewBox="0 0 200 34" preserveAspectRatio="none"><path d="M0 22 L30 18 L60 19 L90 12 L120 13 L150 8 L200 4" fill="none" stroke="#C9B6FF" stroke-width="2"/></svg><div class="kpi-foot">Input terakhir 2 jam lalu</div></div>
+  </div>
+  <div class="grid row">
+    <section class="card glass">
+      <h2>Perlu ditangani sekarang</h2>
+      <div class="todo">
+        <div class="todo-item"><span class="n amb">3</span><div><b>Request menunggu keputusanmu</b><small>Paling lama: Banner live Shopee 12.12 dari Shella, 2 hari</small></div><span class="btn acc">Putuskan</span></div>
+        <div class="todo-item"><span class="n red">1</span><div><b>EP perlu revisi belum diperbarui</b><small>Modal Jadi Affiliator, tayang Rab 25 Nov</small></div><span class="btn">Lihat EP</span></div>
+        <div class="todo-item"><span class="n blu">2</span><div><b>EP baru menunggu OKE</b><small>Villain Versi Host Live, Ganti Niche Terus</small></div><span class="btn">Tinjau</span></div>
+        <div class="todo-item"><span class="n red">1</span><div><b>Konten lewat tanggal, belum posting</b><small>POV Villain tapi Host Live, Rab 25 Nov</small></div><span class="btn">Kalender</span></div>
+      </div>
+    </section>
+    <section class="card glass">
+      <h2>Input KPI per hari <small>19 sampai 25 Nov</small></h2>
+      <div class="chart" id="chart"></div>
+      <div class="axis"><span>Kam 19</span><span>Jum 20</span><span>Sab 21</span><span>Min 22</span><span>Sen 23</span><span>Sel 24</span><span>Rab 25</span></div>
+      <div class="legend"><span style="--c:var(--accent-2)">Konten</span><span style="--c:#8FE3B5">Desain</span><span style="--c:#F3C77A">Video</span><span style="--c:#C9B6FF">AIGC upload</span></div>
+    </section>
+  </div>
+  <div class="grid row3">
+    <section class="card glass">
+      <h2>Content plan minggu ini <small>23 sampai 29 Nov</small></h2>
+      <div class="plan">
+        <div class="plan-line"><b>AAB</b><div class="track"><i style="width:60%"></i></div><em>6/10</em></div>
+        <div class="plan-line"><b>NUSANTARA</b><div class="track"><i style="width:75%"></i></div><em>3/4</em></div>
+      </div>
+      <div class="days" style="margin-top:14px">
+        <div class="day">Sen<b>23</b><div class="dots"><i></i><i></i></div></div>
+        <div class="day">Sel<b>24</b><div class="dots"><i></i><i></i><i></i></div></div>
+        <div class="day today">Rab<b>25</b><div class="dots"><i class="p"></i><i class="p"></i></div></div>
+        <div class="day">Kam<b>26</b><div class="dots"><i class="p"></i><i class="p"></i></div></div>
+        <div class="day">Jum<b>27</b><div class="dots"><i class="p"></i><i class="p"></i></div></div>
+        <div class="day">Sab<b>28</b><div class="dots"><i class="x"></i></div></div>
+        <div class="day">Min<b>29</b><div class="dots"><i class="x"></i></div></div>
+      </div>
+    </section>
+    <section class="card glass">
+      <h2>Editorial plan</h2>
+      <div class="ep-stat"><div><b>2</b>menunggu OKE</div><div><b>1</b>revisi</div><div><b>28</b>posted</div></div>
+      <div class="next"><div><span>Modal Jadi Affiliator</span><span class="tag rev">Revisi</span></div><div><span>Villain Versi Host Live</span><span class="tag wait">Menunggu</span></div></div>
+    </section>
+    <section class="card glass">
+      <h2>Aktivitas tim</h2>
+      <ul class="act">
+        <li><span class="avatar sm">Z</span>Zahra tandai POSTED: Jadi Creator Ka Yoga<span>12 mnt</span></li>
+        <li><span class="avatar sm">A</span>Aqil kirim 3 desain ke blok DESIGN<span>1 jam</span></li>
+        <li><span class="avatar sm">R</span>Rifqi: 9 produksi, 7 upload<span>2 jam</span></li>
+        <li><span class="avatar sm">A</span>Albar selesaikan request: Video teaser 12.12<span>kemarin</span></li>
+      </ul>
+    </section>
+  </div>
+</template>
+
+<template id="ep">
+  <div class="head">
+    <div><h1>Editorial plan</h1><p>AABxNUSANTARA - EP November · 33 konten</p></div>
+    <div class="tools">
+      <div class="pill-tabs"><span class="on">AAB</span><span>NUSANTARA</span></div>
+      <div class="pill-tabs"><span>Minggu ini</span><span class="on">Menunggu</span><span>Revisi</span><span>Semua</span></div>
+    </div>
+  </div>
+  <div class="ep-wrap">
+    <section class="ep-list glass">
+      <div class="ep-date">RAB 25 NOV</div>
+      <div class="ep-item on"><b>Villain Versi Host Live</b><small><span>REELS · Aini</span><span class="tag wait">Menunggu</span></small></div>
+      <div class="ep-item"><b>Modal Jadi Affiliator</b><small><span>REELS · Refly</span><span class="tag rev">Revisi</span></small></div>
+      <div class="ep-date">KAM 26 NOV</div>
+      <div class="ep-item"><b>Ganti Niche Terus</b><small><span>ANIMASI 6</span><span class="tag wait">Menunggu</span></small></div>
+      <div class="ep-item"><b>Bunyi-bunyian Anak MCN</b><small><span>REELS · Random team</span><span class="tag ok">OKE</span></small></div>
+      <div class="ep-date">JUM 27 NOV</div>
+      <div class="ep-item"><b>Hal Wajib Affiliator 2027</b><small><span>REELS · Creator AAB</span><span class="tag ok">OKE</span></small></div>
+    </section>
+    <section class="ep-detail glass">
+      <div>
+        <div class="slide">
+          <div class="l"><b>FORMAT: REELS</b><b>COVER : VILLAIN VERSI HOST LIVE</b>Reference: instagram.com/reel/DgElIlITkoS<br><br>Talent: Aini<br><br>Upload: Rabu, 25 November 2026<div class="ph">foto reference</div></div>
+          <div class="r"><div class="h"><span>NARASI</span><span>VISUAL</span></div><div class="b"><div>Dialog:<br>"Well well well, eh iya kak yang ini ada di kerkun nomor 4 yaa"</div><div>Act:<br>(seperti reference, muter kursi dan dialog)<div class="ph" style="height:90px">frame reference</div></div></div></div>
+        </div>
+        <p class="note">Screenshot slide asli dari Google Slides. Klik untuk memperbesar.</p>
+      </div>
+      <div class="side-panel">
+        <dl class="facts"><dt>Upload</dt><dd>Rab 25 Nov 2026</dd><dt>Format</dt><dd>REELS</dd><dt>Talent</dt><dd>Aini</dd><dt>Kalender</dt><dd>POV Villain tapi Host Live</dd></dl>
+        <div class="label">Keputusan</div>
+        <div class="seg2"><span class="ok">OKE</span><span>Revisi</span></div>
+        <div class="label">Catatan revisi</div>
+        <textarea placeholder="Contoh: revisi di kolom VISUAL"></textarea>
+        <span class="btn" style="text-align:center;padding:9px">Buka di Google Slides</span>
+      </div>
+    </section>
+  </div>
+</template>
+
+<template id="pengaturan">
+  <div class="head"><div><h1>Personalisasi</h1><p>Hanya berlaku di laptop ini, kecuali foto profil.</p></div></div>
+  <div class="set-wrap">
+    <section class="card glass">
+      <h2>Foto profil</h2>
+      <div class="photo"><div class="avatar big">R</div><div><span class="btn acc">Ganti foto</span> <span class="btn">Hapus</span><p class="note">JPG atau PNG. Dipotong bulat otomatis dan terlihat oleh seluruh tim.</p></div></div>
+      <h2 style="margin-top:22px">Warna aksen</h2>
+      <div class="swatches">
+        <span class="sw on" style="--c:#5B9BE6"></span><span class="sw" style="--c:#3DBE9A"></span><span class="sw" style="--c:#E7A93B"></span><span class="sw" style="--c:#E36B7B"></span><span class="sw" style="--c:#9C7BEA"></span><span class="sw" style="--c:#E07BC1"></span><span class="sw" style="--c:#D8DEE6"></span><span class="sw custom" title="Pilih warna sendiri"></span>
+      </div>
+      <div class="preview-mini"><div></div><div></div><div></div></div>
+    </section>
+    <section class="card glass">
+      <h2>Kaca dan tampilan</h2>
+      <div class="opt"><div>Transparansi kaca<small>Seberapa terlihat wallpaper di belakang jendela</small></div></div>
+      <div class="slider"><i></i></div>
+      <div class="opt"><div>Efek kaca Windows 11<small>Mica atau acrylic asli. Di Windows 10 jadi latar gradasi.</small></div><span class="toggle"></span></div>
+      <div class="opt"><div>Mode terang<small>Untuk ruangan yang terang</small></div><span class="toggle off"></span></div>
+      <div class="opt"><div>Buka sebagai widget kecil saat menyala<small>Jendela penuh tetap bisa dibuka dari ikon di sidebar</small></div><span class="toggle off"></span></div>
+      <div class="opt" style="border:0"><div>Buka otomatis saat Windows menyala</div><span class="toggle"></span></div>
+    </section>
+  </div>
+</template>
+
+<script>
+const page = new URLSearchParams(location.search).get("p") || "ringkasan";
+document.getElementById("main").appendChild(document.getElementById(page).content.cloneNode(true));
+document.querySelectorAll(".nav").forEach((n) => n.classList.toggle("on", n.dataset.n === page));
+const chart = document.getElementById("chart");
+if (chart) {
+  const data = [[2,3,1,4],[4,2,2,6],[0,1,0,3],[0,0,0,2],[3,4,2,9],[5,3,1,7],[2,1,1,4]];
+  const cols = ["var(--accent-2)", "#8FE3B5", "#F3C77A", "#C9B6FF"];
+  data.forEach((d) => {
+    const b = document.createElement("div"); b.className = "bar";
+    d.forEach((v, i) => { const s = document.createElement("i"); s.style.height = v * 8 + "px"; s.style.background = cols[i]; b.appendChild(s); });
+    chart.appendChild(b);
+  });
+}
+if (location.search.includes("green")) document.documentElement.style.cssText = "--accent:#3DBE9A;--accent-2:#7FDDBF";
+</script>
+</body>
+</html>
