@@ -11,7 +11,9 @@ const MEMBERS = [
 const PILLARS = ["Education", "Entertainment", "Functional"];
 const ACCOUNTS = ["AAB", "NUSANTARA", "COLLABORATION"];
 const KATEGORI = ["Reels/VT", "Carousel"];
-const POLL_MS = 2 * 60 * 1000;
+// Cek server tiap 5 menit. Server sendiri mengecek sheet tiap 10 menit, jadi lebih sering tidak ada gunanya.
+const POLL_MS = 5 * 60 * 1000;
+const FOCUS_MIN_MS = 60 * 1000;
 
 const ui = {
   settings: null,
@@ -58,13 +60,28 @@ async function api(path, body) {
   } catch {
     throw new Error("Tidak bisa menghubungi server. Cek internet atau alamat server di Pengaturan.");
   }
-  const data = await res.json().catch(() => ({ ok: false, error: `Server membalas HTTP ${res.status}.` }));
+  const data = await res.json().catch(() => null);
+  if (!data) {
+    // Halaman error Cloudflare (bukan JSON): kuota harian habis (429) atau worker kelebihan beban (5xx).
+    if (res.status === 429) throw limitError();
+    if (res.status >= 500) throw new Error("Server sedang kelebihan beban. Coba lagi beberapa menit lagi. Sementara bisa input langsung di sheet.");
+    throw new Error(`Server membalas HTTP ${res.status}.`);
+  }
+  if (/limit exceeded|exceeded.*limit/i.test(data.error || "")) throw limitError();
   if (res.status === 401 && path !== "/api/login" && ui.settings.token) {
     await logout("Sesi habis atau akun diubah Ray. Login lagi.");
     throw new Error("Sesi habis. Login lagi.");
   }
   if (!res.ok || data.ok === false) throw new Error(data.error || `Server membalas HTTP ${res.status}.`);
   return data;
+}
+
+// Batas gratis Cloudflare reset jam 00.00 UTC (07.00 WIB). Sampai saat itu widget berhenti mengirim request.
+function limitError() {
+  const now = new Date();
+  const reset = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+  ui.limitedUntil = reset;
+  return new Error("Server mencapai batas gratis harian Cloudflare. Normal lagi jam 07.00 WIB. Sementara input langsung di sheet.");
 }
 
 async function logout(msg) {
@@ -76,6 +93,8 @@ async function logout(msg) {
 
 async function loadState({ refresh = false } = {}) {
   if (!configured()) { render(); return; }
+  if (ui.limitedUntil && Date.now() < ui.limitedUntil) { render(); return; }
+  ui.lastLoad = Date.now();
   ui.loading = true;
   ui.error = "";
   renderFooter();
@@ -158,6 +177,8 @@ function renderBar() {
   const epOpen = isLead() ? epItems.filter((i) => !i.posted && !i.decision).length : epItems.filter((i) => !i.posted && i.decision && i.decision.status === "REVISI").length;
   $("epCount").textContent = ui.ep && ui.ep.configured && epOpen ? `(${epOpen})` : "";
   document.querySelector(".tabs").hidden = !configured();
+  // Tombol muat ulang hanya untuk Ray. Tim mendapat data baru otomatis tiap 5 menit.
+  $("btnRefresh").hidden = !isLead();
   $("btnPin").classList.toggle("on", !!ui.settings.pinned);
   $("btnPin").setAttribute("aria-pressed", String(!!ui.settings.pinned));
   const c = (ui.data && ui.data.counts) || {};
@@ -181,7 +202,7 @@ function renderFooter() {
   if (ui.loading) { f.textContent = "Memuat data…"; return; }
   if (ui.data && ui.data.fetchedAt) {
     const t = new Date(ui.data.fetchedAt);
-    f.textContent = `Sheet terakhir dicek ${pad(t.getHours())}.${pad(t.getMinutes())}. Server cek tiap 10 menit.`;
+    f.textContent = `Sheet terakhir dicek ${pad(t.getHours())}.${pad(t.getMinutes())}. Server cek tiap 10 menit${isLead() ? "" : ", widget ikut tiap 5 menit"}.`;
   } else f.textContent = "";
 }
 
@@ -199,7 +220,10 @@ const statusPill = (r) =>
     : '<span class="pill new">Baru</span>';
 
 function stateBlock() {
-  if (ui.error) return `<div class="pad"><p class="msg err" role="alert">${esc(ui.error)}</p><button class="btn secondary" data-act="retry">Coba lagi</button></div>`;
+  if (ui.error) {
+    const limited = ui.limitedUntil && Date.now() < ui.limitedUntil;
+    return `<div class="pad"><p class="msg err" role="alert">${esc(ui.error)}</p>${limited ? "" : `<button class="btn secondary" data-act="retry">Coba lagi</button>`}</div>`;
+  }
   if (!ui.data) return `<p class="empty">Memuat data…</p>`;
   if (!ui.data.configured)
     return `<div class="empty"><p>Link sheet bulan ini belum diisi.</p><button class="btn" data-act="settings">Buka Pengaturan</button></div>`;
@@ -1576,7 +1600,7 @@ async function init() {
   render();
   await loadState();
   setInterval(() => loadState(), POLL_MS);
-  window.addEventListener("focus", () => { if (!ui.loading) loadState(); });
+  window.addEventListener("focus", () => { if (!ui.loading && Date.now() - (ui.lastLoad || 0) > FOCUS_MIN_MS) loadState(); });
 }
 
 init();
