@@ -1,0 +1,131 @@
+# Panduan setup Creative AAB
+
+Isi paket:
+- `server/worker.js`: kode server pusat untuk Cloudflare.
+- `Creative AAB-win32-x64/`: widget Windows untuk 4 laptop tim.
+
+Urutan setup: **A. Lark → B. Sheet → C. Cloudflare → D. Widget**. Cukup sekali. Setelah itu tinggal rutinitas awal bulan (bagian E).
+
+---
+
+## A. Lark Developer (open.larksuite.com/app)
+
+1. Buka app yang sudah kamu buat.
+2. **Features → Bot**, lalu aktifkan. Ini syarat supaya app bisa ditambahkan ke file sheet.
+3. **Permissions & Scopes**, tambahkan:
+   - `sheets:spreadsheet`
+4. **Version Management & Release**: buat versi baru, lalu Publish. Kalau perlu approval admin, approve dulu.
+5. **Credentials & Basic Info**: catat **App ID**. App Secret jangan dikirim ke siapa pun. Nanti langsung ditempel di Cloudflare.
+
+## B. Sheet bulan ini
+
+1. **Tambahkan app ke file.** Buka file GMV CAMPAIGN NOVEMBER 2026, klik **⋯ → More → Add Apps** (atau "Add Document App"), cari nama app, lalu beri akses **Can edit**.
+2. **Buat blok AIGC untuk Rifqi** di tab **Creative Report Analytic**, kolom **AH sampai AK**. Kolom X sampai AF sudah dipakai blok SHOWCASE HANDLED, jadi AG dibiarkan kosong sebagai jarak.
+
+   | Sel | Isi |
+   |---|---|
+   | AH3 | AIGC |
+   | AH4 | Summary |
+   | AJ4 | `=SUM(AJ6:AJ104)` |
+   | AK4 | `=SUM(AK6:AK104)` |
+   | AH5 | No |
+   | AI5 | Tanggal |
+   | AJ5 | Jumlah Produksi |
+   | AK5 | Jumlah Upload |
+
+   Judul AJ5 dan AK5 harus mengandung kata "Produksi" dan "Upload". Server memakai judul itu untuk memastikan bloknya ada.
+3. **Disarankan:** ubah akses link file jadi internal organisasi saja. Saat dicek, file ini bisa dibuka tanpa login Lark.
+
+## C. Cloudflare (dash.cloudflare.com)
+
+1. **Buat Worker.** Buka **Workers & Pages → Create → Create Worker**, beri nama `creative-aab`, lalu **Deploy**.
+2. **Tempel kode.** Klik **Edit code**, hapus semua isi bawaan, tempel seluruh isi `server/worker.js`, lalu **Deploy**.
+3. **Buat penyimpanan.** Buka **Storage & Databases → KV → Create**, beri nama `creative-aab-store`.
+4. **Sambungkan penyimpanan.** Buka Worker `creative-aab` → **Settings → Bindings → Add → KV namespace**.
+   - Variable name: `STORE`
+   - KV namespace: `creative-aab-store`
+5. **Isi variabel.** Masih di Worker yang sama, buka **Settings → Variables and Secrets**, tambahkan 3 variabel:
+   - `LARK_APP_ID`, tipe Text: App ID dari langkah A5
+   - `LARK_APP_SECRET`, tipe **Secret**: App Secret Lark
+   - `ADMIN_PASSWORD`, tipe **Secret**: password awal akun `ray`, minimal 12 karakter campur huruf dan angka. Jangan dibagikan ke siapa pun. Password ini juga jalan masuk kalau Ray lupa password.
+6. **Jadwal cek otomatis.** Buka **Settings → Trigger Events → Cron Triggers → Add**, isi `*/10 1-11 * * 1-6`. Artinya tiap 10 menit, Senin sampai Sabtu, jam 08.00 sampai 18.59 WIB.
+7. **Cek server.** Buka alamat Worker di browser (contoh `https://creative-aab.namakamu.workers.dev`). Harus muncul `{"ok":true,"app":"creative-aab","auth":"accounts"}`.
+
+## D. Widget di laptop
+
+1. Unduh installer terbaru dari https://github.com/creative273/creative-aab/releases/latest (file `Creative-AAB-Setup-x.y.z.exe`).
+2. Jalankan installer. Karena belum bertanda tangan digital, Windows memunculkan "Windows protected your PC". Klik **More info → Run anyway**. Cukup sekali, update berikutnya tidak memunculkan ini.
+3. Login. Ray masuk dengan username `ray` dan password `ADMIN_PASSWORD` (langkah C5), lalu langsung ganti password di **Pengaturan → Ganti password**.
+4. **Ray saja:** buka **Pengaturan → Kelola akun tim**, buat akun untuk Zahra, Aqil, Albar, dan Rifqi. Kirim username dan password ke masing-masing lewat chat pribadi.
+5. **Ray saja, sekali per bulan:** **Pengaturan → Link sheet bulan ini**, tempel link file GMV CAMPAIGN, lalu klik **Pakai file ini**.
+
+**Pindah dari versi 1.0 (folder zip):** klik kanan ikon CRE di tray → **Keluar**, hapus folder `Creative AAB-win32-x64` lama, lalu pasang installer di atas. Versi 1.0 berhenti jalan begitu server versi baru di-deploy, karena kunci tim sudah diganti login per akun.
+
+**Update:** aplikasi mengecek versi baru saat dibuka dan tiap 6 jam, lalu mengunduhnya diam-diam. Begitu siap, muncul pop-up. Klik **Pengaturan → Pasang dan restart**, atau biarkan saja: update terpasang otomatis saat aplikasi ditutup. Tombol **Cek pembaruan** ada di Pengaturan.
+
+Widget otomatis terbuka saat Windows menyala. Tombol − menyembunyikannya ke tray (ikon CRE di pojok kanan bawah, di dekat jam).
+
+## Akun dan akses
+
+| Akun | Akses |
+|---|---|
+| Ray (`ray`) | Semua. Approve, Pending, Reject request. Dashboard tim. Link sheet bulan ini. Kelola akun tim. |
+| Zahra | Input KPI CONTENT, request creative (yang sudah di-approve). |
+| Aqil | Input KPI DESIGN, request creative. |
+| Albar | Input KPI VIDEO, request creative. |
+| Rifqi | Input KPI AIGC, request creative. |
+
+Akses dicek di server, bukan hanya disembunyikan di tampilan. Satu anggota satu akun.
+
+- **Reset password:** Pengaturan → Kelola akun tim → Reset password. Laptop yang memakai akun itu otomatis keluar dan perlu login lagi.
+- **Nonaktifkan:** akun langsung keluar dan tidak bisa login sampai diaktifkan lagi. Data di sheet tidak berubah.
+- **Salah password 5 kali:** akun dikunci 15 menit.
+- **Ray lupa password:** login dengan `ADMIN_PASSWORD` dari Cloudflare. Kalau itu juga lupa, ganti nilai `ADMIN_PASSWORD` di Cloudflare lalu login dengan nilai baru.
+
+## E. Rutinitas tiap awal bulan
+
+1. Duplikat file seperti biasa.
+2. Tambahkan app ke file baru (langkah B1). Blok AIGC ikut terbawa saat diduplikat.
+3. Di widget Ray: **Pengaturan → Link sheet bulan ini**, tempel link baru, lalu klik **Pakai file ini**. Semua laptop otomatis ikut.
+
+## Cara kerja per orang
+
+| Nama | Blok | Yang diisi |
+|---|---|---|
+| Fitria Azzahra Kurnia | CONTENT (A:K) | Tarik file bulk ABT (.xlsx). Konten lama hanya diperbarui angkanya. Untuk konten baru, isi nama konten sendiri (caption ABT ditampilkan sebagai acuan) dan pilih pillar. Ada input manual untuk konten yang metriknya tidak terbaca ABT. |
+| Athallah Aqil Sukendar | DESIGN (N:Q) | Bisa banyak sekaligus. **Import dari Excel**: tanggal dan informasi detil terisi otomatis dari file Excel (format sama dengan blok DESIGN), baris yang sudah ada di sheet dilewati, lalu tinggal tambah gambar per baris. Bisa juga tarik beberapa SS sekaligus (mengisi baris yang belum punya gambar, urut dari atas) atau klik "+ Tambah inputan". Ada tombol untuk mengirim baris yang sudah ada gambarnya saja. |
+| Muhammad Albar | VIDEO (S:V) | Sama seperti DESIGN, termasuk Import dari Excel. Per input bisa tempel link video, lalu SS diambil otomatis, atau tarik SS manual. Link ditulis di kolom Informasi Detil karena blok VIDEO tidak punya kolom link. |
+| Rifqi Firega | AIGC (AH:AK) | Tanggal, jumlah produksi, jumlah upload. Tanggal yang sama dikirim ulang akan ditimpa. |
+| Ray Sangkhylang | Lead | Melihat semua request dan memutuskan Approve, Pending, atau Reject. Tab **Dashboard**: angka KPI per orang, kapan terakhir input, jumlah request per status, dan aktivitas terbaru dari widget. |
+
+## Alur request creative
+
+1. Divisi lain mengisi tab REQUEST CREATIVE seperti biasa.
+2. Request yang kolom G (Remark Creative) masih kosong hanya muncul di widget Ray, dengan label "Belum diputuskan". Ray mendapat pop-up untuk request ini.
+3. Ray membuka request, lalu memilih **Approve**, **Pending**, atau **Reject**. Pilihan ditulis ke kolom G.
+   - **Approve:** request muncul di widget tim, dan tim mendapat pop-up paling lambat 10 menit kemudian.
+   - **Pending** dan **Reject:** request tidak muncul di widget tim. Tetap terlihat di widget Ray (filter Pending atau Reject) dan keputusannya bisa diubah kapan saja.
+   - Kalau Ray mengubah keputusan request yang sudah di-approve, request itu hilang lagi dari widget tim.
+4. Setelah selesai, tim menempel link output lalu klik **Tandai selesai**. Link masuk ke kolom Output dan PROGRESS menjadi DONE. Output hanya bisa berupa link.
+
+## Berhenti memakai
+
+- **Sementara:** nonaktifkan app di Lark Developer.
+- **Satu orang:** nonaktifkan atau hapus akunnya di Kelola akun tim.
+- **Permanen:** uninstall Creative AAB di tiap laptop (Settings → Apps), hapus Worker di Cloudflare, dan hapus app di Lark Developer.
+
+Data yang sudah masuk ke sheet tetap ada.
+
+## Kalau ada masalah
+
+| Pesan | Penyebab dan solusi |
+|---|---|
+| "Username atau password salah" | Cek ejaan. Minta Ray reset password kalau lupa. |
+| "Sesi habis. Login lagi." | Ray mereset password atau menonaktifkan akun itu. Login dengan password terbaru. |
+| "Akun kamu tidak punya akses ke fitur ini" | Akun terhubung ke anggota yang salah. Ray hapus lalu buat ulang akunnya. |
+| "Cek pembaruan gagal" | Biasanya internet. Kalau terus muncul, unduh installer terbaru dari halaman Releases dan pasang di atas versi lama. |
+| "Login ke Lark gagal" | App ID atau App Secret di Cloudflare salah, atau app belum di-publish (langkah A4). |
+| "Lark menolak … App belum punya akses ke file ini" | Ulangi langkah B1 untuk file bulan ini. |
+| "Blok AIGC (AH:AK) belum ada" | Buat blok sesuai langkah B2, lalu klik **Pakai file ini** lagi. |
+| "Worker exceeded CPU" saat kirim gambar | Gambar terlalu berat untuk paket gratis Cloudflare. Coba kirim SS yang lebih kecil. Kalau sering terjadi, kabari untuk disesuaikan. |
+| SS otomatis Albar gagal atau isinya halaman login | Link private. Ubah akses link jadi "siapa pun dengan link", atau tarik SS manual. |

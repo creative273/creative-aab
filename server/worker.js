@@ -93,7 +93,9 @@ export const MEMBERS = {
 };
 const LEAD_USER = "ray";
 const SESSION_DAYS = 60;
-const PBKDF2_ITER = 100000; // batas maksimal di Cloudflare Workers
+// Paket gratis Cloudflare membatasi CPU 10 ms per permintaan. 20.000 iterasi sekitar 5 ms.
+// Percobaan login dibatasi 5 kali per 15 menit, jadi tebak password tetap lambat.
+const PBKDF2_ITER = 20000;
 const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60 * 1000;
 
@@ -216,16 +218,16 @@ function checkPassword(p) {
   if (p.length > 100) throw fail("Password maksimal 100 karakter.");
 }
 
-async function hashPassword(password, saltB64) {
+async function hashPassword(password, saltB64, iter = PBKDF2_ITER) {
   const salt = saltB64 ? b64ToBuf(saltB64) : crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
-  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: PBKDF2_ITER }, key, 256);
-  return { salt: bufToB64(salt), hash: bufToB64(new Uint8Array(bits)), iter: PBKDF2_ITER };
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: iter }, key, 256);
+  return { salt: bufToB64(salt), hash: bufToB64(new Uint8Array(bits)), iter };
 }
 
 async function verifyPassword(password, acc) {
   if (!acc || !acc.salt || !acc.hash) return false;
-  const { hash } = await hashPassword(password, acc.salt);
+  const { hash } = await hashPassword(password, acc.salt, acc.iter || PBKDF2_ITER);
   return safeEqual(hash, acc.hash);
 }
 

@@ -18,8 +18,8 @@ jobs:
       run:
         working-directory: widget
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -35,6 +35,12 @@ jobs:
           if gh release view "$V" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then echo "baru=0" >> "$GITHUB_OUTPUT"; else echo "baru=1" >> "$GITHUB_OUTPUT"; fi
       - if: steps.ver.outputs.baru == '1'
         run: npm ci
+      - name: Buat tag versi
+        if: steps.ver.outputs.baru == '1'
+        shell: bash
+        run: |
+          git tag -f "${{ steps.ver.outputs.tag }}"
+          git push -f origin "${{ steps.ver.outputs.tag }}"
       - name: Bangun installer dan rilis
         if: steps.ver.outputs.baru == '1'
         run: npx electron-builder --win nsis --x64 --publish always

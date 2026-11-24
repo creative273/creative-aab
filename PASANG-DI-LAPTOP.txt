@@ -1,0 +1,22 @@
+CARA PASANG CREATIVE AAB DI LAPTOP
+
+1. Kalau masih ada versi lama (folder "Creative AAB-win32-x64"):
+   klik kanan ikon CRE di tray, pilih "Keluar", lalu hapus folder lama itu.
+
+2. Unduh installer terbaru:
+   https://github.com/creative273/creative-aab/releases/latest
+   Pilih file Creative-AAB-Setup-x.y.z.exe, lalu jalankan.
+   Kalau muncul "Windows protected your PC", klik "More info" lalu "Run anyway".
+   Ini cukup sekali.
+
+3. Login dengan username dan password dari Ray.
+   Setelah masuk, ganti password di Pengaturan > Ganti password.
+
+Widget otomatis terbuka setiap Windows menyala.
+Tombol - menyembunyikan widget ke tray (ikon CRE di pojok kanan bawah, dekat jam).
+Untuk menutup penuh: klik kanan ikon CRE di tray, lalu pilih "Keluar".
+
+UPDATE
+Tidak perlu unduh manual lagi. Kalau ada versi baru, muncul pop-up.
+Buka Pengaturan lalu klik "Pasang dan restart", atau biarkan saja:
+update terpasang sendiri saat aplikasi ditutup.
