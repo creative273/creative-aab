@@ -54,7 +54,7 @@ async function api(path, body) {
   try {
     res = await fetch(base + path, {
       method: body ? "POST" : "GET",
-      headers: { Authorization: `Bearer ${ui.settings.token}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${ui.settings.token}`, "Content-Type": "application/json", ...(ui.update && ui.update.current ? { "X-App-Version": ui.update.current } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
@@ -2296,6 +2296,7 @@ const notifVerb = (n) => {
   if (n.type === "mention") return n.postBy && n.postBy !== n.by ? `menandai kamu di komentar ${owner === "postinganmu" ? "postinganmu" : owner}` : "menandai kamu di postingan";
   if (n.type === "comment") return "mengomentari postinganmu";
   if (n.type === "reply") return `juga mengomentari ${owner}`;
+  if (n.type === "update") return `minta kamu update aplikasi ke v${n.version}`;
   if (n.type === "react") return `memberi ${(REACTS.find((r) => r[0] === n.reaction) || [, "👍"])[1]} pada postinganmu`;
   return "berinteraksi denganmu";
 };
@@ -2308,14 +2309,30 @@ async function loadNotif({ announce = false } = {}) {
   try {
     const r = await api("/api/notif");
     const prevIds = new Set((ui.notif && ui.notif.items || []).map((n) => n.id));
-    const fresh = ui.notif ? r.items.filter((n) => !n.read && !prevIds.has(n.id)) : [];
+    const wasLoaded = !!ui.notif;
+    const fresh = wasLoaded ? r.items.filter((n) => !n.read && !prevIds.has(n.id)) : [];
     ui.notif = r;
     if (ui.data) ui.data.notifUnread = r.unread;
-    if (announce && fresh.length) {
-      const n = fresh[0];
-      window.aab.showPopup(fresh.length === 1
+    // Permintaan update: kalau sudah di versi itu, tandai dibaca tanpa pop-up. Kalau belum, mulai unduh pembaruan.
+    const cur = (ui.update && ui.update.current) || "";
+    for (const n of r.items.filter((x) => x.type === "update" && !x.read)) {
+      if (cur && verNum(cur) >= verNum(n.version)) { n.read = true; r.unread = Math.max(0, r.unread - 1); api("/api/notif/read", { id: n.id }).catch(() => {}); }
+      else if (fresh.includes(n) || !ui.updAsked) { ui.updAsked = true; window.aab.checkUpdate().then((u) => { ui.update = u; renderBar(); }).catch(() => {}); }
+    }
+    // Saat aplikasi baru dibuka, permintaan update yang belum dibaca tetap muncul sebagai pop-up (sekali).
+    const firstLoad = !wasLoaded && !ui.updPopped;
+    const pop = firstLoad ? r.items.filter((n) => n.type === "update" && !n.read).slice(0, 1) : fresh.filter((n) => !n.read);
+    if (firstLoad && pop.length) ui.updPopped = true;
+    if ((announce || firstLoad) && pop.length) {
+      const n = pop[0];
+      if (n.type === "update") {
+        window.aab.showPopup({ id: `post::${n.id}`, title: `${profileOf(n.by).short} minta semua update ke v${n.version}`, body: "Pembaruan sedang diunduh. Klik Buka, lalu Pasang dan restart di Pengaturan." });
+        renderBell(); if (ui.bellOpen) renderBellPanel();
+        return;
+      }
+      window.aab.showPopup(pop.length === 1
         ? { id: `post:${n.postId}:${n.id}`, title: `${profileOf(n.by).short} ${notifVerb(n)}`, body: plainMentions(n.text || "") }
-        : { id: `post:${n.postId}:${n.id}`, title: `${fresh.length} notifikasi baru`, body: fresh.map((x) => `${profileOf(x.by).short} ${notifVerb(x)}`).join("\n") });
+        : { id: `post:${n.postId}:${n.id}`, title: `${pop.length} notifikasi baru`, body: pop.map((x) => `${profileOf(x.by).short} ${notifVerb(x)}`).join("\n") });
     }
     renderBell();
     if (ui.bellOpen) renderBellPanel();
@@ -2340,7 +2357,7 @@ function renderBellPanel() {
   const items = (ui.notif && ui.notif.items) || [];
   p.innerHTML = `<div class="bell-head"><b>Notifikasi</b>${items.some((n) => !n.read) ? `<button class="linklike" data-bell="readall">Tandai semua dibaca</button>` : ""}</div>
     ${!ui.notif ? `<p class="empty">Memuat…</p>` : items.length ? `<ul class="bell-list">${items.map((n) => `<li><button class="bell-item${n.read ? "" : " unread"}" data-notif="${esc(n.id)}" data-post="${esc(n.postId || "")}">
-      ${avatar(n.by, "")}<span class="bell-body"><span class="bell-text"><b>${esc(profileOf(n.by).name)}</b> ${esc(notifVerb(n))}${n.text ? `: “${esc(plainMentions(n.text))}”` : ""}</span><small>${esc(ago(n.at))}</small></span></button></li>`).join("")}</ul>`
+      ${avatar(n.by, "")}<span class="bell-body"><span class="bell-text"><b>${esc(profileOf(n.by).name)}</b> ${esc(notifVerb(n))}${n.text && n.type !== "update" ? `: “${esc(plainMentions(n.text))}”` : ""}</span><small>${esc(ago(n.at))}</small></span></button></li>`).join("")}</ul>`
       : `<p class="empty">Belum ada notifikasi. Kalau ada yang menandai, mengomentari, atau memberi reaksi, muncul di sini.</p>`}`;
   const r = $("btnBell").getBoundingClientRect();
   p.style.top = `${Math.round(r.bottom + 8)}px`;
@@ -2359,6 +2376,7 @@ async function openNotif(id, postId) {
   ui.bellOpen = false; renderBellPanel();
   const n = ui.notif && ui.notif.items.find((x) => x.id === id);
   if (n && !n.read) { n.read = true; ui.notif.unread = Math.max(0, ui.notif.unread - 1); renderBell(); api("/api/notif/read", { id }).catch(() => {}); }
+  if (n && n.type === "update") { if (isFull()) goPage("settings"); else { ui.view = "settings"; ui.form = {}; render(); } return; }
   if (postId) openPost(postId);
 }
 
@@ -2491,7 +2509,29 @@ function updateBox() {
     <h2>Aplikasi</h2>
     <p class="hint">${cur}. ${line}</p>
     ${btn}
+    ${isLead() ? teamUpdateBox() : ""}
   </div>`;
+}
+
+const verNum = (v) => String(v || "0.0.0").split(".").map(Number).reduce((a, n) => a * 1000 + (n || 0), 0);
+
+// Ray: lihat versi aplikasi tiap orang, kirim pop-up minta update.
+function teamUpdateBox() {
+  const cur = (ui.update && ui.update.current) || "";
+  const f = ui.form;
+  const vs = ui.appVersions;
+  if (!vs && !ui.appVersionsLoading) {
+    ui.appVersionsLoading = true;
+    api("/api/app/versions").then((r) => { ui.appVersions = r.versions; }).catch(() => { ui.appVersions = []; }).finally(() => { ui.appVersionsLoading = false; if (ui.view === "settings" || currentPage() === "settings") render(); });
+  }
+  const behind = (vs || []).filter((v) => v.username !== ui.settings.user.username && verNum(v.version) < verNum(cur));
+  return `<h3 class="sub-h">Versi aplikasi tim</h3>
+    ${!vs ? `<p class="hint">Memuat…</p>` : `<ul class="ver-list">${vs.map((v) => `<li>${avatar(v.username, "sm")}<span>${esc(v.name)}</span>
+      ${!v.version ? `<span class="pill wait">belum tercatat</span>` : verNum(v.version) >= verNum(cur) ? `<span class="pill done">v${esc(v.version)}</span>` : `<span class="pill late">v${esc(v.version)}, belum update</span>`}</li>`).join("")}</ul>
+      <p class="hint">Versi tercatat saat aplikasi orang itu terhubung ke server. Yang belum tercatat berarti masih memakai versi sebelum 1.5.2 atau belum membuka aplikasi.</p>`}
+    ${cur ? `<button class="btn secondary" data-act="askUpdate" ${f.asking || !vs ? "disabled" : ""}>${f.asking ? "Mengirim…" : `Kirim pop-up: minta semua update ke v${esc(cur)}`}</button>` : ""}
+    ${f.askMsg ? `<p class="msg ${f.askMsgType}" role="status">${esc(f.askMsg)}</p>` : ""}
+    ${vs && !behind.length && vs.every((v) => v.version) ? `<p class="hint">Semua sudah memakai versi terbaru.</p>` : ""}`;
 }
 
 function settingsView() {
@@ -2559,6 +2599,16 @@ function googleSettings() {
 
 function bindSettings() {
   bindCommon();
+  on("askUpdate", async () => {
+    const cur = ui.update && ui.update.current;
+    ui.form.asking = true; render();
+    try {
+      const r = await api("/api/app/update-request", { version: cur });
+      ui.appVersions = r.versions;
+      Object.assign(ui.form, { asking: false, askMsg: r.sent.length ? `Pop-up dikirim ke ${r.sent.length} orang. Muncul di laptop mereka dalam 1 menit.` : "Semua yang tercatat sudah di versi ini. Tidak ada yang dikirimi.", askMsgType: "ok" });
+    } catch (e) { Object.assign(ui.form, { asking: false, askMsg: e.message, askMsgType: "err" }); }
+    render();
+  });
   bindLook();
   bindIgSettings();
   keep(["sSheet", "pOld", "pNew", "gCal", "gEp"]);
