@@ -1545,7 +1545,9 @@ async function igNewPosts(env) {
   const cfg = await getConfig(env);
   const media = await igAllMedia(env);
   const { byCode } = await readContent(env, cfg);
-  const cutoff = Date.now() - 45 * 864e5;
+  // Hanya postingan bulan berjalan (WIB): sheet KPI dibuat per bulan.
+  const w = new Date(Date.now() + 7 * 3600 * 1000);
+  const cutoff = Date.UTC(w.getUTCFullYear(), w.getUTCMonth(), 1) - 7 * 3600 * 1000;
   const items = [...media.values()]
     .filter((m) => !byCode.has(m.code) && Date.parse(m.timestamp) >= cutoff)
     .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))

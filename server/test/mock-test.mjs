@@ -38,6 +38,7 @@ const IG = {
       { id: "m1", shortcode: "DfPH3bSB2uY", media_type: "VIDEO", media_product_type: "REELS", ago: 3 * 864e5, views: 1300, reach: 1100, likes: 21, comments: 3, shares: 1, saved: 2 },
       { id: "m2", shortcode: "DgNEWaaaaa1", media_type: "CAROUSEL_ALBUM", media_product_type: "FEED", ago: 864e5, views: null, reach: 500, likes: 30, comments: 4, shares: 2, saved: 5 },
       { id: "m3", shortcode: "DgCOLLAB001", media_type: "VIDEO", media_product_type: "REELS", ago: 2 * 864e5, views: 800, reach: 700, likes: 10, comments: 1, shares: 0, saved: 0 },
+      { id: "m4", shortcode: "DgLASTMONTH", media_type: "VIDEO", media_product_type: "REELS", ago: 40 * 864e5, views: 90, reach: 80, likes: 1, comments: 0, shares: 0, saved: 0 },
     ] },
   "tok-nus-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": { id: "1782", username: "nusantara.mcn", followers: 6452,
     media: [{ id: "m3", shortcode: "DgCOLLAB001", media_type: "VIDEO", media_product_type: "REELS", ago: 2 * 864e5, views: 800, reach: 700, likes: 10, comments: 1, shares: 0, saved: 0 }] },
@@ -359,7 +360,7 @@ assert.equal(r.status, 200);
 assert.ok(!JSON.stringify(r.data).includes("tok-"), "token tidak boleh bocor");
 const aab = r.data.accounts.AAB;
 assert.equal(aab.followers, 19400);
-assert.equal(aab.media.length, 3);
+assert.equal(aab.media.length, 4, "konten 60 hari tetap tampil di Insight");
 const car = aab.media.find((m) => m.id === "m2");
 assert.equal(car.views, null, "carousel tanpa views tetap tersimpan");
 assert.equal(car.saved, 5);
@@ -379,6 +380,7 @@ assert.equal(r.status, 200, JSON.stringify(r.data));
 const codes = r.data.items.map((x) => x.code);
 assert.ok(!codes.includes("DfPH3bSB2uY"), "yang sudah ada di sheet tidak muncul");
 assert.ok(codes.includes("DgNEWaaaaa1"));
+assert.ok(!codes.includes("DgLASTMONTH"), "postingan bulan lalu tidak muncul");
 const collab = r.data.items.find((x) => x.code === "DgCOLLAB001");
 assert.equal(collab.account, "COLLABORATION", "muncul di dua akun = kolaborasi");
 assert.equal(r.data.items.find((x) => x.code === "DgNEWaaaaa1").kategori, "Carousel");

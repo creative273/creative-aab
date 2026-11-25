@@ -123,7 +123,7 @@ Yang terjadi setelah terhubung:
 - Menu **Insight Instagram** (semua akun tim): followers, views, reach, dan interaksi 7 hari (dibanding 7 hari sebelumnya), grafik views per hari 14 hari, konten terbaik 7 atau 30 hari, dan tabel semua konten 60 hari terakhir. Ray punya tombol **Sinkron sekarang**.
 - Followers, daftar postingan, dan insight akun diambil tiap 3 jam. Angka per konten diperbarui bergiliran tiap 10 menit, konten seminggu terakhir didahulukan. Semua ini berjalan di jadwal server yang sama dengan sheet (Senin sampai Sabtu, 08.00 sampai 18.00 WIB). Instagram sendiri bisa terlambat sampai 48 jam.
 - **Angka di blok CONTENT terisi otomatis.** Tiap jam, Views, Likes, Comment, dan Share & Save untuk link yang sudah ada di blok CONTENT diperbarui dari Instagram. Share & Save diisi jumlah share ditambah save. Kalau Instagram tidak memberi angka views (misalnya sebagian carousel), kolom Views dibiarkan seperti semula, kolom lain tetap diperbarui.
-- **Zahra tidak perlu file ABT lagi untuk konten IG.** Di Input KPI klik **Ambil postingan baru**: muncul postingan 45 hari terakhir yang belum ada di sheet, lengkap dengan tanggal, akun (COLLABORATION kalau postingan muncul di kedua akun), kategori, dan angka. Zahra tinggal isi nama konten dan pilih pillar, lalu kirim. Upload file ABT tetap ada sebagai cadangan.
+- **Zahra tidak perlu file ABT lagi untuk konten IG.** Di Input KPI klik **Ambil postingan baru**: muncul postingan bulan ini (sesuai sheet bulanan) yang belum ada di sheet, lengkap dengan tanggal, akun (COLLABORATION kalau postingan muncul di kedua akun), kategori, dan angka. Zahra tinggal isi nama konten dan pilih pillar, lalu kirim. Upload file ABT tetap ada sebagai cadangan.
 
 ## E. Rutinitas tiap awal bulan
 
