@@ -121,9 +121,11 @@ globalThis.fetch = async (url, opts = {}) => {
 };
 
 const kv = new Map();
+let kvPuts = 0;
+const kvWrites = () => kvPuts;
 const env = {
   LARK_APP_ID: "cli_test", LARK_APP_SECRET: "secret", ADMIN_PASSWORD: "admin-rahasia-123",
-  STORE: { get: async (k, t) => { const v = kv.get(k); return v === undefined ? null : t === "json" ? JSON.parse(v) : v; }, put: async (k, v) => { kv.set(k, v); }, delete: async (k) => { kv.delete(k); } },
+  STORE: { get: async (k, t) => { const v = kv.get(k); return v === undefined ? null : t === "json" ? JSON.parse(v) : v; }, put: async (k, v) => { kvPuts++; kv.set(k, v); }, delete: async (k) => { kv.delete(k); } },
 };
 let TOK = "";
 const call = async (method, path, body, token = TOK) => {
@@ -599,5 +601,28 @@ await call("POST", "/api/feed/edit", { id: np, text: "Ide konten baru, gimana @a
 assert.equal((await unread(T.zahra)).unread, 0, "tag lama tidak dikirim ulang");
 r = await call("GET", "/api/notif");
 assert.ok(r.data.items.some((n) => n.type === "mention" && n.by === "albar2"));
+
+// 21. Minta semua update (v1.5.2)
+const callV = async (path, token, v) => {
+  const res = await worker.fetch(new Request("https://x.workers.dev" + path, { headers: { Authorization: `Bearer ${token}`, "X-App-Version": v } }), env, {});
+  return res.json();
+};
+await callV("/api/state", T.zahra, "1.5.1");
+await callV("/api/state", T.aqil, "1.5.2");
+const putsBefore = kvWrites();
+await callV("/api/state", T.zahra, "1.5.1");
+assert.equal(kvWrites() - putsBefore, 0, "versi sama tidak ditulis ulang");
+assert.equal((await call("POST", "/api/app/update-request", { version: "1.5.2" }, T.zahra)).status, 403, "hanya Ray");
+assert.equal((await call("POST", "/api/app/update-request", { version: "abc" })).status, 400);
+await call("POST", "/api/notif/read", {}, T.zahra); await call("POST", "/api/notif/read", {}, T.aqil);
+r = await call("POST", "/api/app/update-request", { version: "1.5.2" });
+assert.equal(r.status, 200, JSON.stringify(r.data));
+assert.ok(r.data.sent.includes("zahra")); assert.ok(!r.data.sent.includes("aqil"), "yang sudah versi terbaru tidak dikirimi"); assert.ok(!r.data.sent.includes("ray"));
+assert.equal(r.data.versions.find((x) => x.username === "zahra").version, "1.5.1");
+const nu = (await call("GET", "/api/notif", null, T.zahra)).data.items[0];
+assert.equal(nu.type, "update"); assert.equal(nu.version, "1.5.2"); assert.match(nu.text, /Cek pembaruan/);
+assert.equal((await call("GET", "/api/notif", null, T.aqil)).data.unread, 0);
+r = await call("GET", "/api/app/versions");
+assert.equal(r.data.versions.find((x) => x.username === "aqil").version, "1.5.2");
 
 console.log("SEMUA TES LULUS. Panggilan Lark tiruan:", calls.length);

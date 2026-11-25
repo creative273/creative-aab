@@ -64,6 +64,8 @@ export default {
         "GET /api/feed/item": ["all", () => feedOne(env, me, url)],
         "GET /api/notif": ["all", () => getNotif(env, me)],
         "POST /api/notif/read": ["all", () => readNotif(env, me, body)],
+        "POST /api/app/update-request": ["lead", () => requestUpdate(env, me, body)],
+        "GET /api/app/versions": ["lead", async () => ({ ok: true, versions: appVersions(await getAccounts(env)) })],
         "POST /api/password": ["all", () => changeOwnPassword(env, me, body)],
         "POST /api/request/done": ["all", () => requestDone(env, body, me)],
         "POST /api/kpi/content/preview": ["content", () => contentPreview(env, body)],
@@ -191,7 +193,31 @@ async function authenticate(env, request) {
   if (!payload) throw fail("Sesi habis. Login lagi.", 401);
   const acc = (await getAccounts(env))[payload.u];
   if (!acc || acc.active === false || (acc.ver || 1) !== payload.v) throw fail("Sesi habis. Login lagi.", 401);
+  // Catat versi widget (untuk daftar versi di Pengaturan Ray). Ditulis hanya saat berubah.
+  const v = (request.headers.get("X-App-Version") || "").trim();
+  if (/^\d+\.\d+\.\d+$/.test(v) && acc.appVersion !== v) {
+    const accounts = await getAccounts(env);
+    if (accounts[acc.username]) { accounts[acc.username].appVersion = v; accounts[acc.username].appSeenAt = new Date().toISOString(); await putAccounts(env, accounts); }
+    acc.appVersion = v;
+  }
   return acc;
+}
+
+const verNum = (v) => String(v || "0.0.0").split(".").map(Number).reduce((a, n) => a * 1000 + (n || 0), 0);
+
+// Ray minta semua laptop update: tiap akun dapat notifikasi "update", widget menampilkannya sebagai pop-up.
+async function requestUpdate(env, me, body) {
+  const version = clean(body.version);
+  if (!/^\d+\.\d+\.\d+$/.test(version)) throw fail("Versi tidak dikenali.");
+  const accounts = await getAccounts(env);
+  const to = Object.values(accounts).filter((a) => a.active !== false && a.username !== me.username && verNum(a.appVersion) < verNum(version));
+  const text = `Tolong update aplikasi ke v${version}. Buka Pengaturan, klik Cek pembaruan, lalu Restart.`;
+  for (const a of to) await notify(env, a.username, { type: "update", by: me.username, version, text }).catch(() => {});
+  return { ok: true, sent: to.map((a) => a.username), versions: appVersions(accounts) };
+}
+
+function appVersions(accounts) {
+  return Object.values(accounts).filter((a) => a.active !== false).map((a) => ({ username: a.username, name: a.name || a.username, version: a.appVersion || "", seenAt: a.appSeenAt || null })).sort((a, b) => String(a.name || a.username).localeCompare(String(b.name || b.username)));
 }
 
 async function changeOwnPassword(env, me, body) {
@@ -1940,7 +1966,7 @@ function json(obj, status = 200) {
 
 function cors(res) {
   res.headers.set("Access-Control-Allow-Origin", "*");
-  res.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-App-Version");
   res.headers.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   return res;
 }

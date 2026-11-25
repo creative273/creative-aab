@@ -141,6 +141,8 @@ http.createServer(async (req, res) => {
     await go("/api/feed/comment", { id: p1.item.id, text: "Siap, nanti sore aku mulai." }, tok.albar);
     await go("/api/feed/comment", { id: p1.item.id, text: "Mantap Zahra. Jangan lupa cover-nya." }, token);
     await go("/api/feed/post", { text: "Banner Shopee 12.12 sudah final, cek di folder DESIGN ya." }, tok.aqil);
+    await worker.fetch(new Request("http://x/api/state", { headers: { Authorization: "Bearer " + tok.zahra, "X-App-Version": "1.5.1" } }), env, {});
+    await worker.fetch(new Request("http://x/api/state", { headers: { Authorization: "Bearer " + tok.albar, "X-App-Version": "1.5.0" } }), env, {});
     const fsm = await import("node:fs");
     if (fsm.existsSync("/tmp/ui/post.jpg")) {
       const img = "data:image/jpeg;base64," + fsm.readFileSync("/tmp/ui/post.jpg").toString("base64");
