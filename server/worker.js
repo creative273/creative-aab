@@ -1287,7 +1287,7 @@ const IG_PROFILE_EVERY_MS = 3 * 3600 * 1000;
 const IG_MEDIA_FRESH_MS = 2 * 3600 * 1000;
 const IG_KEEP_DAYS = 90;
 const IG_MEDIA_DAYS = 60;
-const IG_SHEET_EVERY_MS = 60 * 60 * 1000;
+const IG_SHEET_EVERY_MS = 3 * 60 * 60 * 1000;
 
 // t: { token, kind: "ig" | "fb", igId }. Untuk token fb, "me" dan "me/..." diarahkan ke ID akun IG.
 async function ig(path, t, params = {}) {
@@ -1521,7 +1521,7 @@ async function igAllMedia(env) {
 
 const sheetMetrics = (m) => [m.views ?? 0, m.likes ?? 0, m.comments ?? 0, (m.shares ?? 0) + (m.saved ?? 0)];
 
-// Isi otomatis Views/Likes/Comment/Share & Save di blok CONTENT untuk konten yang sudah ada di sheet (tiap jam).
+// Isi otomatis Views/Likes/Comment/Share & Save di blok CONTENT untuk konten yang sudah ada di sheet (tiap 3 jam).
 async function igSheetSync(env, { force = false } = {}) {
   const cfg = await env.STORE.get("config", "json");
   if (!cfg) return { updated: 0 };
