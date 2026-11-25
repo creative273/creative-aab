@@ -28,8 +28,46 @@ set(REPORT,"G4",2);set(REPORT,"O4",2);set(REPORT,"T4",0);
 write(`${REQ}!A2:I4`, [[1,"04 November 2026","WIDI","Request logo plang","13 November 2026","link",null,"DONE",null],[2,"04 November 2026","RERE","PPT TikTok One",null,null,null,"PENDING",null],[3,"5-Nov-26","REFLY","Sticker 11.11",null,null,null,null,null]]);
 write(`${REQ}!A5:A20`, Array.from({length:16},(_,i)=>[4+i]));
 
+// Instagram tiruan (v1.4)
+const igCalls = [];
+const NOWS = Date.now();
+const iso = (msAgo) => new Date(NOWS - msAgo).toISOString().replace(/\.\d+Z$/, "+0000");
+const IG = {
+  "tok-aab-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": { id: "1781", username: "agensianakbangsa", followers: 19400,
+    media: [
+      { id: "m1", shortcode: "DfPH3bSB2uY", media_type: "VIDEO", media_product_type: "REELS", ago: 3 * 864e5, views: 1300, reach: 1100, likes: 21, comments: 3, shares: 1, saved: 2 },
+      { id: "m2", shortcode: "DgNEWaaaaa1", media_type: "CAROUSEL_ALBUM", media_product_type: "FEED", ago: 864e5, views: null, reach: 500, likes: 30, comments: 4, shares: 2, saved: 5 },
+      { id: "m3", shortcode: "DgCOLLAB001", media_type: "VIDEO", media_product_type: "REELS", ago: 2 * 864e5, views: 800, reach: 700, likes: 10, comments: 1, shares: 0, saved: 0 },
+    ] },
+  "tok-nus-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": { id: "1782", username: "nusantara.mcn", followers: 6452,
+    media: [{ id: "m3", shortcode: "DgCOLLAB001", media_type: "VIDEO", media_product_type: "REELS", ago: 2 * 864e5, views: 800, reach: 700, likes: 10, comments: 1, shares: 0, saved: 0 }] },
+};
+function igMock(u) {
+  const tok = u.searchParams.get("access_token");
+  igCalls.push(u.pathname);
+  const acc = IG[tok];
+  const ok = (d) => new Response(JSON.stringify(d), { status: 200 });
+  const err = (m) => new Response(JSON.stringify({ error: { message: m, code: 190 } }), { status: 400 });
+  if (u.pathname === "/refresh_access_token") return acc ? ok({ access_token: tok, expires_in: 5184000 }) : err("Invalid OAuth access token");
+  if (!acc) return err("Invalid OAuth access token - Cannot parse access token");
+  assert.ok(u.pathname.startsWith("/v25.0/"), u.pathname);
+  const path = u.pathname.slice(7);
+  if (path === "me") return ok({ user_id: acc.id, id: acc.id, username: acc.username, account_type: "MEDIA_CREATOR", followers_count: acc.followers, media_count: 197 });
+  if (path === "me/media") return ok({ data: acc.media.map((m) => ({ id: m.id, shortcode: m.shortcode, media_type: m.media_type, media_product_type: m.media_product_type, permalink: `https://www.instagram.com/reel/${m.shortcode}/`, caption: "Caption " + m.id, timestamp: iso(m.ago), like_count: m.likes, comments_count: m.comments })) });
+  if (path === "me/insights") { assert.equal(u.searchParams.get("metric_type"), "total_value"); return ok({ data: [{ name: "views", total_value: { value: 900 } }, { name: "reach", total_value: { value: 600 } }, { name: "total_interactions", total_value: { value: 40 } }, { name: "accounts_engaged", total_value: { value: 30 } }] }); }
+  const mm = path.match(/^(\w+)\/insights$/);
+  if (mm) {
+    const m = acc.media.find((x) => x.id === mm[1]);
+    const metrics = u.searchParams.get("metric").split(",");
+    if (metrics.includes("views") && m.views === null) return new Response(JSON.stringify({ error: { message: "(#100) metric views not supported", code: 100 } }), { status: 400 });
+    return ok({ data: metrics.map((k) => ({ name: k, period: "lifetime", values: [{ value: m[k] }] })) });
+  }
+  return err("unknown " + path);
+}
+
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url);
+  if (u.host === "graph.instagram.com") return igMock(u);
   const body = opts.body ? JSON.parse(opts.body) : null;
   calls.push(`${opts.method || "GET"} ${u.pathname}`);
   const ok = (data) => new Response(JSON.stringify({ code: 0, msg: "success", data }));
@@ -271,5 +309,78 @@ assert.equal((await call("POST", "/api/accounts/save", { username: "ray", active
 assert.equal((await call("POST", "/api/accounts/delete", { username: "ray" })).status, 400);
 assert.equal((await call("POST", "/api/accounts/delete", { username: "albar" })).status, 200);
 assert.equal((await call("GET", "/api/me", null, T.albar)).status, 401);
+
+// 16. Instagram (v1.4)
+const TAAB = "tok-aab-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const TNUS = "tok-nus-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+assert.equal((await call("POST", "/api/ig/connect", { account: "AAB", token: TAAB }, T.zahra)).status, 403, "hanya Ray yang hubungkan IG");
+assert.equal((await call("POST", "/api/ig/connect", { account: "AAB", token: "pendek" })).status, 400);
+r = await call("POST", "/api/ig/connect", { account: "AAB", token: "tok-salah-cccccccccccccccccccccccccccccccccccccccccccc" });
+assert.equal(r.status, 409);
+assert.match(r.data.error, /Instagram/);
+r = await call("POST", "/api/ig/connect", { account: "AAB", token: TAAB });
+assert.equal(r.status, 200, JSON.stringify(r.data));
+assert.equal(r.data.username, "agensianakbangsa");
+r = await call("POST", "/api/ig/connect", { account: "NUSANTARA", token: TAAB });
+assert.equal(r.status, 400, "token yang sama tidak boleh dipakai dua akun");
+assert.equal((await call("POST", "/api/ig/connect", { account: "NUSANTARA", token: TNUS })).status, 200);
+// Tim boleh lihat insight, token tidak pernah ikut terkirim
+r = await call("GET", "/api/ig", null, T.aqil);
+assert.equal(r.status, 200);
+assert.ok(!JSON.stringify(r.data).includes("tok-"), "token tidak boleh bocor");
+const aab = r.data.accounts.AAB;
+assert.equal(aab.followers, 19400);
+assert.equal(aab.media.length, 3);
+const car = aab.media.find((m) => m.id === "m2");
+assert.equal(car.views, null, "carousel tanpa views tetap tersimpan");
+assert.equal(car.saved, 5);
+assert.equal(aab.media.find((m) => m.id === "m1").views, 1300);
+const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+assert.equal(aab.daily[today].views, 900);
+assert.equal(aab.daily[today].followers, 19400);
+// Blok CONTENT terisi otomatis untuk konten yang sudah ada (shortcode DfPH3bSB2uY di baris 6)
+r = await call("POST", "/api/ig/sync", {});
+assert.equal(r.status, 200);
+assert.deepEqual(read(`${REPORT}!H6:K6`)[0], [1300, 21, 3, 3], "views, likes, comments, share+save");
+assert.equal((await call("POST", "/api/ig/sync", {}, T.zahra)).status, 403);
+// Zahra: konten IG yang belum ada di sheet
+assert.equal((await call("GET", "/api/ig/new", null, T.aqil)).status, 403);
+r = await call("GET", "/api/ig/new", null, T.zahra);
+assert.equal(r.status, 200, JSON.stringify(r.data));
+const codes = r.data.items.map((x) => x.code);
+assert.ok(!codes.includes("DfPH3bSB2uY"), "yang sudah ada di sheet tidak muncul");
+assert.ok(codes.includes("DgNEWaaaaa1"));
+const collab = r.data.items.find((x) => x.code === "DgCOLLAB001");
+assert.equal(collab.account, "COLLABORATION", "muncul di dua akun = kolaborasi");
+assert.equal(r.data.items.find((x) => x.code === "DgNEWaaaaa1").kategori, "Carousel");
+assert.match(collab.tanggal, /^\d{1,2}\/\d{1,2}\/2026$/);
+// Kirim lewat jalur yang sama dengan ABT
+const it = r.data.items.find((x) => x.code === "DgNEWaaaaa1");
+r = await call("POST", "/api/kpi/content/submit", { rows: [{ ...it, konten: "Carousel Recap Summit", pillar: "Functional" }] }, T.zahra);
+assert.equal(r.status, 200, JSON.stringify(r.data));
+assert.equal(r.data.added, 1);
+r = await call("GET", "/api/ig/new", null, T.zahra);
+assert.ok(!r.data.items.some((x) => x.code === "DgNEWaaaaa1"));
+// Carousel tanpa views: kolom Views di sheet tidak ditimpa, Likes/Comment/Share&Save tetap diperbarui
+let carRow = 0;
+for (let i = 6; i < 60; i++) if (String(grid[REPORT]["G" + i] || "").includes("DgNEWaaaaa1")) carRow = i;
+assert.ok(carRow, "baris carousel ditemukan");
+write(`${REPORT}!H${carRow}:K${carRow}`, [[777, 1, 1, 1]]);
+kv.delete("ig:sheet"); // sinkron sheet jalan lagi di cron berikutnya
+await worker.scheduled({}, env, { waitUntil: (p) => p });
+await new Promise((res) => setTimeout(res, 50));
+assert.deepEqual(read(`${REPORT}!H${carRow}:K${carRow}`)[0], [777, 30, 4, 7]);
+// Token hampir habis diperpanjang otomatis lewat cron
+const tk = JSON.parse(kv.get("ig:accounts"));
+tk.AAB.expiresAt = Date.now() + 5 * 864e5; tk.AAB.refreshedAt = Date.now() - 2 * 864e5;
+kv.set("ig:accounts", JSON.stringify(tk));
+await worker.scheduled({}, env, { waitUntil: (p) => p });
+await new Promise((res) => setTimeout(res, 50));
+assert.ok(igCalls.includes("/refresh_access_token"));
+assert.ok(JSON.parse(kv.get("ig:accounts")).AAB.expiresAt > Date.now() + 50 * 864e5);
+// Lepas akun
+assert.equal((await call("POST", "/api/ig/disconnect", { account: "NUSANTARA" })).status, 200);
+r = await call("GET", "/api/ig", null, T.aqil);
+assert.equal(r.data.accounts.NUSANTARA.connected, false);
 
 console.log("SEMUA TES LULUS. Panggilan Lark tiruan:", calls.length);

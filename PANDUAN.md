@@ -105,6 +105,26 @@ Widget membaca dan menulis Content Calendar (Google Sheets) dan EP (Google Slide
 7. Bagikan file ke service account. Buka folder induk di Google Drive tempat folder bulanan dibuat (folder yang berisi `11. NOVEMBER` dan seterusnya) → **Share** → tempel email service account (bentuknya `creative-aab-widget@....iam.gserviceaccount.com`, tampil juga di Pengaturan widget Ray) → **Editor** → hilangkan centang Notify → **Share**. File di dalam folder itu, termasuk bulan-bulan berikutnya, otomatis ikut.
 8. Di widget Ray: **Pengaturan → Content Calendar dan EP**, tempel link Content Calendar dan link EP bulan ini, lalu klik **Pakai link ini**.
 
+## G. Instagram: Insight dan angka konten otomatis (mulai versi 1.4)
+
+Widget mengambil data resmi dari Instagram untuk @agensianakbangsa (AAB) dan Nusantara MCN (NUSANTARA). Keduanya akun Creator, jadi bisa. Cukup diatur sekali oleh Ray.
+
+1. Buka https://developers.facebook.com, login dengan akun Facebook Ray, klik **My Apps → Create App**. Beri nama `Creative AAB Insight`. Pada pilihan use case, pilih yang untuk mengelola konten dan pesan Instagram (**Manage messaging & content on Instagram**), lalu selesaikan pembuatan app. App cukup di mode **Development**, tidak perlu App Review karena hanya dipakai untuk akun sendiri.
+2. Di menu kiri: **Instagram → API setup with Instagram login**. Kalau diminta permission, pastikan `instagram_business_basic` dan `instagram_business_manage_insights` aktif.
+3. Tambahkan kedua akun IG sebagai tester: **App roles → Roles → Add People → Instagram Tester**, isi username `agensianakbangsa`, lalu ulangi untuk akun Nusantara.
+4. Terima undangan di tiap akun IG: buka Instagram (di browser lebih mudah) → **Settings → Apps and websites → Tester invites** → **Accept**. Lakukan di kedua akun.
+5. Kembali ke **Instagram → API setup with Instagram login → Generate access tokens → Add account**. Login dengan akun AAB, izinkan, lalu klik **Generate token** di baris akun itu dan salin tokennya.
+6. Di widget Ray: **Pengaturan → Instagram**, tempel token di baris **AAB**, klik **Hubungkan**. Widget mengecek token ke Instagram dan menampilkan @username kalau berhasil.
+7. Ulangi langkah 5 dan 6 untuk akun NUSANTARA (logout dulu dari Instagram di browser, lalu login dengan akun Nusantara).
+8. **Penting:** token adalah akses ke akun IG. Jangan kirim lewat chat atau email, dan jangan screenshot. Token disimpan di server, tidak pernah dikirim ke laptop tim, dan diperpanjang otomatis sebelum masa 60 harinya habis. Kalau token bocor, buat token baru (langkah 5) lalu tempel lagi; token lama bisa dicabut dari Instagram → Settings → Apps and websites.
+
+Yang terjadi setelah terhubung:
+
+- Menu **Insight Instagram** (semua akun tim): followers, views, reach, dan interaksi 7 hari (dibanding 7 hari sebelumnya), grafik views per hari 14 hari, konten terbaik 7 atau 30 hari, dan tabel semua konten 60 hari terakhir. Ray punya tombol **Sinkron sekarang**.
+- Followers, daftar postingan, dan insight akun diambil tiap 3 jam. Angka per konten diperbarui bergiliran tiap 10 menit, konten seminggu terakhir didahulukan. Semua ini berjalan di jadwal server yang sama dengan sheet (Senin sampai Sabtu, 08.00 sampai 18.00 WIB). Instagram sendiri bisa terlambat sampai 48 jam.
+- **Angka di blok CONTENT terisi otomatis.** Tiap jam, Views, Likes, Comment, dan Share & Save untuk link yang sudah ada di blok CONTENT diperbarui dari Instagram. Share & Save diisi jumlah share ditambah save. Kalau Instagram tidak memberi angka views (misalnya sebagian carousel), kolom Views dibiarkan seperti semula, kolom lain tetap diperbarui.
+- **Zahra tidak perlu file ABT lagi untuk konten IG.** Di Input KPI klik **Ambil postingan baru**: muncul postingan 45 hari terakhir yang belum ada di sheet, lengkap dengan tanggal, akun (COLLABORATION kalau postingan muncul di kedua akun), kategori, dan angka. Zahra tinggal isi nama konten dan pilih pillar, lalu kirim. Upload file ABT tetap ada sebagai cadangan.
+
 ## E. Rutinitas tiap awal bulan
 
 1. Duplikat file seperti biasa.
@@ -116,7 +136,7 @@ Widget membaca dan menulis Content Calendar (Google Sheets) dan EP (Google Slide
 
 | Nama | Blok | Yang diisi |
 |---|---|---|
-| Fitria Azzahra Kurnia | CONTENT (A:K) | Tarik file bulk ABT (.xlsx). Konten lama hanya diperbarui angkanya. Untuk konten baru, isi nama konten sendiri (caption ABT ditampilkan sebagai acuan) dan pilih pillar. Ada input manual untuk konten yang metriknya tidak terbaca ABT. |
+| Fitria Azzahra Kurnia | CONTENT (A:K) | Mulai versi 1.4: klik **Ambil postingan baru** (dari Instagram), isi nama konten dan pillar. Angka konten lama diperbarui otomatis tiap jam. Cadangan: tarik file bulk ABT (.xlsx). Konten lama hanya diperbarui angkanya. Untuk konten baru, isi nama konten sendiri (caption ABT ditampilkan sebagai acuan) dan pilih pillar. Ada input manual untuk konten yang metriknya tidak terbaca ABT. |
 | Athallah Aqil Sukendar | DESIGN (N:Q) | Bisa banyak sekaligus. **Import dari Excel**: tanggal dan informasi detil terisi otomatis dari file Excel (format sama dengan blok DESIGN), baris yang sudah ada di sheet dilewati, lalu tinggal tambah gambar per baris. Bisa juga tarik beberapa SS sekaligus (mengisi baris yang belum punya gambar, urut dari atas) atau klik "+ Tambah inputan". Ada tombol untuk mengirim baris yang sudah ada gambarnya saja. |
 | Muhammad Albar | VIDEO (S:V) | Sama seperti DESIGN, termasuk Import dari Excel. Per input bisa tempel link video, lalu SS diambil otomatis, atau tarik SS manual. Link ditulis di kolom Informasi Detil karena blok VIDEO tidak punya kolom link. |
 | Rifqi Firega | AIGC (AH:AK) | Tanggal, jumlah produksi, jumlah upload. Tanggal yang sama dikirim ulang akan ditimpa. |
@@ -159,6 +179,8 @@ Data yang sudah masuk ke sheet tetap ada.
 | "Akses Google belum diatur di server (secret GOOGLE_SA kosong)" | Langkah F5 belum dilakukan, atau Worker belum di-Deploy ulang. |
 | "Login ke Google gagal" | Isi `GOOGLE_SA` tidak lengkap. Tempel ulang seluruh isi file JSON. |
 | "Tidak ada tab content plan di file ini" | Link yang ditempel bukan file Content Calendar, atau header baris 3 berubah (# , Content Pillar, Format, Platform, Content, Date). |
+| "Token Instagram ditolak" atau Insight menampilkan "Sinkron terakhir gagal" | Token salah salin, dicabut, atau password IG diganti. Buat token baru (langkah G5) dan tempel lagi di Pengaturan. |
+| "Ambil postingan baru" kosong padahal ada post baru | Daftar postingan diambil tiap 3 jam. Ray bisa klik **Sinkron sekarang** di Insight Instagram, lalu coba lagi. |
 | "Cek pembaruan gagal" | Biasanya internet. Kalau terus muncul, unduh installer terbaru dari halaman Releases dan pasang di atas versi lama. |
 | "Login ke Lark gagal" | App ID atau App Secret di Cloudflare salah, atau app belum di-publish (langkah A4). |
 | "Lark menolak … App belum punya akses ke file ini" | Ulangi langkah B1 untuk file bulan ini. |
