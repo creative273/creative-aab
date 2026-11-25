@@ -28,7 +28,47 @@ set(REPORT,"G4",2);set(REPORT,"O4",2);set(REPORT,"T4",0);
 write(`${REQ}!A2:I4`, [[1,"04 November 2026","WIDI","Request logo plang","13 November 2026","link",null,"DONE",null],[2,"04 November 2026","RERE","PPT TikTok One",null,null,null,"PENDING",null],[3,"5-Nov-26","REFLY","Sticker 11.11",null,null,null,null,null]]);
 write(`${REQ}!A5:A20`, Array.from({length:16},(_,i)=>[4+i]));
 
+import assert2 from "node:assert/strict";
+// Instagram tiruan (v1.4)
+const igCalls = [];
+const NOWS = Date.now();
+const iso = (msAgo) => new Date(NOWS - msAgo).toISOString().replace(/\.\d+Z$/, "+0000");
+const IG = {
+  "tok-aab-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": { id: "1781", username: "agensianakbangsa", followers: 19400,
+    media: [
+      { id: "m1", shortcode: "DfPH3bSB2uY", media_type: "VIDEO", media_product_type: "REELS", ago: 3 * 864e5, views: 1300, reach: 1100, likes: 21, comments: 3, shares: 1, saved: 2 },
+      { id: "m2", shortcode: "DgNEWaaaaa1", media_type: "CAROUSEL_ALBUM", media_product_type: "FEED", ago: 864e5, views: null, reach: 500, likes: 30, comments: 4, shares: 2, saved: 5 },
+      { id: "m3", shortcode: "DgCOLLAB001", media_type: "VIDEO", media_product_type: "REELS", ago: 2 * 864e5, views: 800, reach: 700, likes: 10, comments: 1, shares: 0, saved: 0 },
+      ...Array.from({ length: 8 }, (_, i) => ({ id: "x" + i, shortcode: "DgOLD00000" + i, media_type: i % 3 ? "VIDEO" : "IMAGE", media_product_type: i % 3 ? "REELS" : "FEED", ago: (5 + i * 3) * 864e5, views: 4000 - i * 350, reach: 3000 - i * 200, likes: 60 - i * 4, comments: 9 - i, shares: 4, saved: 6 })),
+    ] },
+  "tok-nus-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": { id: "1782", username: "nusantara.mcn", followers: 6452,
+    media: [{ id: "m3", shortcode: "DgCOLLAB001", media_type: "VIDEO", media_product_type: "REELS", ago: 2 * 864e5, views: 800, reach: 700, likes: 10, comments: 1, shares: 0, saved: 0 }] },
+};
+function igMock(u) {
+  const tok = u.searchParams.get("access_token");
+  igCalls.push(u.pathname);
+  const acc = IG[tok];
+  const ok = (d) => new Response(JSON.stringify(d), { status: 200 });
+  const err = (m) => new Response(JSON.stringify({ error: { message: m, code: 190 } }), { status: 400 });
+  if (u.pathname === "/refresh_access_token") return acc ? ok({ access_token: tok, expires_in: 5184000 }) : err("Invalid OAuth access token");
+  if (!acc) return err("Invalid OAuth access token - Cannot parse access token");
+  assert2.ok(u.pathname.startsWith("/v25.0/"), u.pathname);
+  const path = u.pathname.slice(7);
+  if (path === "me") return ok({ user_id: acc.id, id: acc.id, username: acc.username, account_type: "MEDIA_CREATOR", followers_count: acc.followers, media_count: 197 });
+  if (path === "me/media") return ok({ data: acc.media.map((m) => ({ id: m.id, shortcode: m.shortcode, media_type: m.media_type, media_product_type: m.media_product_type, permalink: `https://www.instagram.com/reel/${m.shortcode}/`, caption: "Caption " + m.id, timestamp: iso(m.ago), like_count: m.likes, comments_count: m.comments })) });
+  if (path === "me/insights") { assert2.equal(u.searchParams.get("metric_type"), "total_value"); return ok({ data: [{ name: "views", total_value: { value: 900 } }, { name: "reach", total_value: { value: 600 } }, { name: "total_interactions", total_value: { value: 40 } }, { name: "accounts_engaged", total_value: { value: 30 } }] }); }
+  const mm = path.match(/^(\w+)\/insights$/);
+  if (mm) {
+    const m = acc.media.find((x) => x.id === mm[1]);
+    const metrics = u.searchParams.get("metric").split(",");
+    if (metrics.includes("views") && m.views === null) return new Response(JSON.stringify({ error: { message: "(#100) metric views not supported", code: 100 } }), { status: 400 });
+    return ok({ data: metrics.map((k) => ({ name: k, period: "lifetime", values: [{ value: m[k] }] })) });
+  }
+  return err("unknown " + path);
+}
+
 globalThis.fetch = async (url, opts = {}) => {
+  if (new URL(url).host === "graph.instagram.com") return igMock(new URL(url));
   const g = await googleFetch(url, opts);
   if (g) return g;
   const u = new URL(url);
@@ -76,5 +116,13 @@ http.createServer(async (req, res) => {
   const { token } = await go("/api/login", { username: "ray", password: "admin-rahasia-123" });
   for (const [u, m] of [["zahra", "fitria"], ["aqil", "athallah"], ["albar", "albar"], ["rifqi", "rifqi"]]) await go("/api/accounts/save", { username: u, member: m, password: "password123" }, token);
   if (process.env.WITH_GOOGLE) await go("/api/google", { calendarUrl: `https://docs.google.com/spreadsheets/d/${CAL_ID}/edit`, epUrl: `https://docs.google.com/presentation/d/${EP_ID}/edit` }, token);
+  if (!process.env.NO_SHEET) await go("/api/config", { url: `https://x.larksuite.com/sheets/${SHEET}` }, token);
+  if (process.env.WITH_IG) {
+    await go("/api/ig/connect", { account: "AAB", token: "tok-aab-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, token);
+    // isi riwayat harian 14 hari supaya grafik terlihat
+    const d = JSON.parse(kv.get("ig:data:AAB"));
+    for (let i = 1; i < 14; i++) { const k = new Date(Date.now() - i * 864e5).toISOString().slice(0, 10); d.daily[k] = { views: 700 + ((i * 137) % 600), reach: 500 + ((i * 91) % 300), total_interactions: 20 + (i * 7) % 40, followers: 19400 - i * 12 }; }
+    kv.set("ig:data:AAB", JSON.stringify(d));
+  }
   console.log("dev server :8787");
 });

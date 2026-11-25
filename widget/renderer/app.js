@@ -10,7 +10,7 @@ const MEMBERS = [
 ];
 const PILLARS = ["Education", "Entertainment", "Functional"];
 const ACCOUNTS = ["AAB", "NUSANTARA", "COLLABORATION"];
-const KATEGORI = ["Reels/VT", "Carousel"];
+const KATEGORI = ["Reels/VT", "Carousel", "Feed"];
 // Cek server tiap 5 menit. Server sendiri mengecek sheet tiap 10 menit, jadi lebih sering tidak ada gunanya.
 const POLL_MS = 5 * 60 * 1000;
 const FOCUS_MIN_MS = 60 * 1000;
@@ -138,7 +138,7 @@ async function checkNewRequests(requests, { silent = false } = {}) {
 // ---------- Render ----------
 function render() {
   applyTheme();
-  if (!isFull() && ui.tab === "home") ui.tab = "request";
+  if (!isFull() && (ui.tab === "home" || ui.tab === "ig")) ui.tab = "request";
   renderBar();
   renderSide();
   renderPageHead();
@@ -156,6 +156,9 @@ function render() {
   } else if (ui.tab === "home") {
     view.innerHTML = homeView();
     bindHome();
+  } else if (ui.tab === "ig" && isFull()) {
+    view.innerHTML = igView();
+    bindIg();
   } else if (ui.tab === "ep" && isFull()) {
     // Jendela penuh: daftar di kiri, detail (screenshot slide) di kanan.
     const open = ui.view === "detail" && ui.ep && ui.ep.items && ui.ep.items.some((x) => x.id === ui.epOpen);
@@ -430,12 +433,13 @@ function contentForm() {
     const baru = rows.filter((r) => !r.exists);
     const kurang = baru.filter((r) => !r.pillar || !(r.judul || "").trim()).length;
     return `<h2>${esc(f.fileName || "File ABT")}</h2>
-      <div class="summary"><div><b>${lama.length}</b>sudah ada, angka diperbarui</div><div><b>${baru.length}</b>konten baru</div></div>
-      ${baru.length ? `<p class="hint">Untuk tiap konten baru, isi nama konten dan pilih content pillar. Caption dari ABT ditampilkan sebagai acuan.</p>` : ""}
+      ${lama.length ? `<div class="summary"><div><b>${lama.length}</b>sudah ada, angka diperbarui</div><div><b>${baru.length}</b>konten baru</div></div>` : ""}
+      ${baru.length ? `<p class="hint">Untuk tiap konten baru, isi nama konten dan pilih content pillar. Caption ditampilkan sebagai acuan.</p>` : ""}
       ${baru
         .map(
           (r, i) => `<div class="bulk-item">
-          <div class="bulk-meta">${esc(r.account)}, ${esc(r.tanggal)}, ${esc(r.kategori)}</div>
+          ${r.thumb ? `<img class="bulk-thumb" src="${esc(r.thumb)}" alt="" loading="lazy">` : ""}
+          <div class="bulk-meta">${esc(r.account)}, ${esc(r.tanggal)}, ${esc(r.kategori)}${r.link ? ` · <a href="${esc(r.link)}" target="_blank" rel="noopener">buka</a>` : ""}</div>
           <div class="bulk-cap">Caption: ${esc(r.caption || "(tanpa caption)")}</div>
           <label for="judul-${i}">Nama konten</label>
           <input type="text" id="judul-${i}" data-judul="${esc(r.code)}" value="${esc(r.judul || "")}" placeholder="Contoh: Kata Terlarang Pas Live">
@@ -446,7 +450,11 @@ function contentForm() {
       <button class="btn" id="sendBulkBtn" data-act="sendBulk" ${kurang || f.busy ? "disabled" : ""}>${f.busy ? "Mengirim…" : bulkLabel(kurang)}</button>
       <button class="btn secondary" data-act="resetBulk">Batal</button>`;
   }
-  return `<h2>Upload data dari Anak Bangsa Tools</h2>
+  return `<h2>Konten baru dari Instagram</h2>
+    <p class="hint">Angka konten yang sudah ada di sheet diperbarui otomatis tiap jam. Ambil daftar postingan baru, lalu isi nama konten dan pillar.</p>
+    <button class="btn" data-act="fromIg" ${f.parsing ? "disabled" : ""}>${f.parsing ? "Mengambil dari Instagram…" : "Ambil postingan baru"}</button>
+    <div class="section"></div>
+    <h2>Atau upload file Anak Bangsa Tools</h2>
     ${dropZone("abtFile", f.parsing ? "Membaca file…" : "Tarik file bulk ABT (.xlsx) ke sini", "atau klik untuk pilih file", ".xlsx")}
     <p class="hint">Konten yang sudah ada di sheet hanya diperbarui angkanya. Konten baru ditambahkan setelah kamu isi nama konten dan pilih pillar.</p>
     <p class="hint">Ada konten yang metriknya tidak terbaca ABT? <button class="linklike" data-act="modeManual">Input manual</button></p>`;
@@ -457,6 +465,16 @@ function bindContent() {
   on("modeManual", () => { ui.form = { mode: "manual" }; render(); });
   on("modeBulk", () => { ui.form = {}; render(); });
   on("resetBulk", () => { ui.form = {}; render(); });
+  on("fromIg", async () => {
+    ui.form = { parsing: true }; render();
+    try {
+      const res = await api("/api/ig/new");
+      ui.form = res.items.length
+        ? { preview: res.items.map((r) => ({ ...r, exists: false, judul: "", pillar: "" })), fileName: `${res.items.length} postingan baru dari Instagram` }
+        : { msg: "Tidak ada postingan baru. Semua postingan 45 hari terakhir sudah ada di sheet.", msgType: "ok" };
+    } catch (e) { ui.form = { msg: e.message, msgType: "err" }; }
+    render();
+  });
   bindDrop("abtFile", null, async (file) => {
     ui.form = { parsing: true }; render();
     try {
@@ -1315,7 +1333,7 @@ function applyTheme() {
 
 async function setMode(mode) {
   ui.settings = await window.aab.setMode(mode);
-  if (mode === "compact" && ui.tab === "home") ui.tab = "request";
+  if (mode === "compact" && (ui.tab === "home" || ui.tab === "ig")) ui.tab = "request";
   if (mode === "full" && configured() && ui.tab === "request" && ui.view === "list") ui.tab = "home";
   if (ui.view === "detail" && ui.tab !== "ep") ui.view = "list";
   render();
@@ -1374,6 +1392,7 @@ const ICONS = {
   ep: '<rect x="3" y="4" width="14" height="10" rx="2"/><path d="M7 17h6"/>',
   cal: '<rect x="3" y="4" width="14" height="13" rx="2"/><path d="M3 8h14M7 2v4M13 2v4"/>',
   accounts: '<circle cx="7" cy="7" r="3"/><circle cx="14" cy="8" r="2.5"/><path d="M2 17c0-3 2.5-5 5-5s5 2 5 5M12 13c3 0 6 1.5 6 4"/>',
+  ig: '<rect x="3" y="3" width="14" height="14" rx="4"/><circle cx="10" cy="10" r="3.2"/><circle cx="14.2" cy="5.8" r=".6" fill="currentColor"/>',
   settings: '<circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6"/>',
 };
 function currentPage() {
@@ -1393,6 +1412,7 @@ function navItems() {
     { group: "KONTEN" },
     { id: "ep", label: "Editorial plan", c: "#FFB4BB", badge: epBadge },
     ...(canCal() ? [{ id: "cal", label: "Kalender konten", c: "#C9B6FF" }] : []),
+    { id: "ig", label: "Insight Instagram", c: "#F3A6C8" },
     { group: isLead() ? "TIM" : "AKUN" },
     ...(isLead() ? [{ id: "accounts", label: "Akun tim", c: "#D6E0EC" }] : []),
     { id: "settings", label: "Pengaturan", c: "#D6E0EC" },
@@ -1432,6 +1452,7 @@ function goPage(id, extra = {}) {
   Object.assign(ui, extra);
   render();
   if (isLead() && (id === "home" || id === "input")) loadState();
+  if (id === "ig") loadIg();
 }
 
 // ---------- Judul halaman (jendela penuh) ----------
@@ -1456,6 +1477,7 @@ function renderPageHead() {
     ep: ["Editorial plan", ui.ep && ui.ep.title ? `${ui.ep.title} · ${ui.ep.items.length} konten` : "Google Slides EP bulan ini"],
     cal: ["Kalender konten", ui.cal && ui.cal.title ? ui.cal.title : "Content Calendar bulan ini"],
     accounts: ["Akun tim", "Buat akun, reset password, atau nonaktifkan akun"],
+    ig: ["Insight Instagram", "Data resmi dari Instagram untuk akun AAB dan NUSANTARA"],
     settings: ["Pengaturan", "Tampilan berlaku di laptop ini. Foto profil terlihat oleh seluruh tim."],
   };
   const [h, p] = heads[currentPage()] || heads.home;
@@ -1709,6 +1731,140 @@ function bindLook() {
   });
 }
 
+// ===================== v1.4: Insight Instagram =====================
+const IG_ACCS = ["AAB", "NUSANTARA"];
+const nf = (n) => (n === null || n === undefined ? "-" : Number(n).toLocaleString("id-ID"));
+const short = (n) => (n === null || n === undefined ? "-" : n >= 1e6 ? `${(n / 1e6).toFixed(1).replace(".", ",")}jt` : n >= 1e4 ? `${(n / 1e3).toFixed(1).replace(".", ",")}rb` : nf(n));
+
+async function loadIg({ sync = false } = {}) {
+  try {
+    ui.ig = sync ? await api("/api/ig/sync", {}) : await api("/api/ig");
+    ui.igErr = "";
+  } catch (e) { ui.igErr = e.message; }
+  if (currentPage() === "ig" || ui.view === "settings") render();
+}
+
+function igSum(daily, days, key) { return days.reduce((a, d) => a + ((daily[d] || {})[key] || 0), 0); }
+
+function igView() {
+  if (ui.igErr) return `<div class="page-card"><div class="pad"><p class="msg err">${esc(ui.igErr)}</p><button class="btn secondary" data-act="igRetry">Coba lagi</button></div></div>`;
+  if (!ui.ig) return `<p class="empty">Memuat insight Instagram…</p>`;
+  const acc = IG_ACCS.includes(ui.igAcc) ? ui.igAcc : "AAB";
+  const a = ui.ig.accounts[acc] || {};
+  const seg = accountSeg(IG_ACCS, acc, "igacc");
+  if (!a.connected) {
+    return `<div class="home"><div class="list-head flush">${seg}</div>
+      <div class="page-card"><div class="pad"><p>Akun ${esc(acc)} belum dihubungkan ke Instagram.</p>${isLead() ? `<button class="btn" data-act="settings">Hubungkan di Pengaturan</button>` : "<p class='hint'>Minta Ray menghubungkannya di Pengaturan.</p>"}</div></div></div>`;
+  }
+  const days7 = lastDays(7), prev7 = lastDays(14).slice(0, 7), days14 = lastDays(14);
+  const d = a.daily || {};
+  const f7 = (d[days7[0]] || {}).followers, fNow = a.followers;
+  const followDelta = f7 && fNow ? fNow - f7 : null;
+  const stat = (label, key) => {
+    const now = igSum(d, days7, key), before = igSum(d, prev7, key);
+    const pct = before ? Math.round(((now - before) / before) * 100) : null;
+    return `<div class="kpi glass"><div class="kpi-top"><b>${label}</b> · 7 hari</div>
+      <div class="kpi-num">${short(now)}${pct !== null ? `<span class="delta${pct < 0 ? " down" : pct === 0 ? " zero" : ""}">${pct > 0 ? "+" : ""}${pct}%</span>` : ""}</div>
+      <svg class="spark" viewBox="0 0 200 34" preserveAspectRatio="none" aria-hidden="true"><path d="${sparkPath(days14.map((x) => (d[x] || {})[key] || 0))}" fill="none" stroke="var(--accent-2)" stroke-width="2"/></svg>
+      <div class="kpi-foot">${pct !== null ? `dibanding 7 hari sebelumnya (${short(before)})` : "data pembanding belum cukup"}</div></div>`;
+  };
+  const vals = days14.map((x) => (d[x] || {}).views || 0);
+  const max = Math.max(1, ...vals);
+  const media = (a.media || []).slice().sort((x, y) => Date.parse(y.timestamp) - Date.parse(x.timestamp));
+  const recent = media.filter((m) => Date.parse(m.timestamp) >= Date.now() - (ui.igRange === 30 ? 30 : 7) * 864e5);
+  const top = recent.slice().sort((x, y) => (y.views ?? y.reach ?? 0) - (x.views ?? x.reach ?? 0)).slice(0, 6);
+  const upd = a.updatedAt ? new Date(a.updatedAt) : null;
+  return `<div class="home">
+    <div class="list-head flush">${seg}<span class="hint">@${esc(a.username)} · ${upd ? `diperbarui ${pad(upd.getHours())}.${pad(upd.getMinutes())}` : ""}${isLead() ? ` · <button class="linklike" data-act="igSync">Sinkron sekarang</button>` : ""}</span></div>
+    ${a.error ? `<p class="msg err">Sinkron terakhir gagal: ${esc(a.error)}${isLead() ? " Hubungkan ulang token di Pengaturan." : ""}</p>` : ""}
+    <div class="home-grid kpis">
+      <div class="kpi glass"><div class="kpi-top"><b>Followers</b></div><div class="kpi-num">${short(fNow)}${followDelta !== null ? `<span class="delta${followDelta < 0 ? " down" : followDelta === 0 ? " zero" : ""}">${followDelta > 0 ? "+" : ""}${nf(followDelta)} 7 hari</span>` : ""}</div>
+        <div class="kpi-foot push">${nf(a.mediaCount)} postingan</div></div>
+      ${stat("Views", "views")}${stat("Reach", "reach")}${stat("Interaksi", "total_interactions")}
+    </div>
+    <div class="home-grid two">
+      <section class="box glass">
+        <h2>Views per hari <small>${esc(fmtDate(days14[0]))} sampai ${esc(fmtDate(days14[13]))}</small></h2>
+        <div class="chart chart14" role="img" aria-label="Views akun per hari, 14 hari terakhir">${vals.map((v, i) => `<div class="bar-col" title="${esc(fmtDate(days14[i]))}: ${nf(v)}">${v ? `<i data-css="height:${Math.round((v / max) * 150)}px;background:var(--accent)"></i>` : ""}</div>`).join("")}</div>
+        <div class="axis chart14">${days14.map((x, i) => `<span>${i % 2 ? "" : esc(fmtDate(x).split(" ").slice(1).join(" "))}</span>`).join("")}</div>
+        <p class="hint">Views dan reach akun dari Instagram, bisa terlambat sampai 48 jam.</p>
+      </section>
+      <section class="box glass">
+        <h2>Konten terbaik
+          <span class="seg mini-seg" role="group" aria-label="Rentang">${[7, 30].map((n) => `<button data-igrange="${n}" aria-pressed="${(ui.igRange || 7) === n}">${n} hari</button>`).join("")}</span></h2>
+        ${top.length ? `<ol class="top-list">${top.map((m) => `<li><a href="${esc(m.permalink)}" target="_blank" rel="noopener">
+            ${m.thumb ? `<img src="${esc(m.thumb)}" alt="" loading="lazy">` : `<span class="no-thumb"></span>`}
+            <span class="top-cap">${esc(m.caption || "(tanpa caption)")}<small>${esc(fmtDate(isoDay(new Date(m.timestamp))))} · ${esc(m.kategori)}</small></span>
+            <span class="top-num"><b>${short(m.views ?? m.reach)}</b>${m.views === null ? "reach" : "views"}</span></a></li>`).join("")}</ol>` : `<p class="all-clear">Belum ada konten di rentang ini.</p>`}
+      </section>
+    </div>
+    <section class="box glass">
+      <h2>Semua konten ${IG_MEDIA_DAYS_LABEL}</h2>
+      <div class="ig-table-wrap"><table class="ig-table">
+        <thead><tr><th>Konten</th><th>Tanggal</th><th>Views</th><th>Reach</th><th>Likes</th><th>Komentar</th><th>Share</th><th>Save</th></tr></thead>
+        <tbody>${media.map((m) => `<tr><td><a href="${esc(m.permalink)}" target="_blank" rel="noopener">${esc((m.caption || "(tanpa caption)").slice(0, 60))}</a><small>${esc(m.kategori)}</small></td>
+          <td>${esc(fmtDate(isoDay(new Date(m.timestamp))))}</td><td>${nf(m.views)}</td><td>${nf(m.reach)}</td><td>${nf(m.likes)}</td><td>${nf(m.comments)}</td><td>${nf(m.shares)}</td><td>${nf(m.saved)}</td></tr>`).join("")}</tbody>
+      </table></div>
+      <p class="hint">${ui.ig.sheetSyncAt ? `Angka konten yang sudah ada di blok CONTENT ikut diperbarui otomatis tiap jam (terakhir ${esc(ago(new Date(ui.ig.sheetSyncAt).toISOString()))}).` : "Angka di blok CONTENT diperbarui otomatis tiap jam."}</p>
+    </section>
+  </div>`;
+}
+const IG_MEDIA_DAYS_LABEL = "60 hari terakhir";
+
+function bindIg() {
+  bindCommon();
+  on("igRetry", () => loadIg());
+  on("igSync", () => { ui.ig = null; render(); loadIg({ sync: true }); });
+  document.querySelectorAll("[data-igacc]").forEach((b) => b.addEventListener("click", () => { ui.igAcc = b.dataset.igacc; render(); }));
+  document.querySelectorAll("[data-igrange]").forEach((b) => b.addEventListener("click", () => { ui.igRange = +b.dataset.igrange; render(); }));
+  if (!ui.ig && !ui.igErr && !ui.igLoading) { ui.igLoading = true; loadIg().finally(() => { ui.igLoading = false; }); }
+}
+
+// Pengaturan Ray: hubungkan akun Instagram
+function igSettings() {
+  const g = ui.ig;
+  const f = ui.form;
+  if (!g) return `<div class="section"><h2>Instagram</h2><p class="hint">Memuat…</p></div>`;
+  return `<div class="section">
+    <h2>Instagram</h2>
+    <p class="hint">Tempel token dari Meta for Developers (Instagram → API setup with Instagram login → Generate token). Token disimpan di server dan diperpanjang otomatis. Jangan kirim token lewat chat.</p>
+    ${IG_ACCS.map((acc) => {
+      const a = g.accounts[acc] || {};
+      const exp = a.expiresAt ? new Date(a.expiresAt) : null;
+      return `<div class="ig-conn">
+        <div class="ig-conn-head"><b>${acc}</b>${a.connected ? `<span class="pill done">@${esc(a.username)}</span>` : `<span class="pill wait">Belum terhubung</span>`}
+          ${a.connected ? `<button class="linklike" data-igoff="${acc}">Lepas</button>` : ""}</div>
+        ${a.connected && exp ? `<p class="hint">Token berlaku sampai ${exp.getDate()} ${BULAN_PANJANG[exp.getMonth()]} ${exp.getFullYear()}, diperpanjang otomatis.${a.error ? ` Error terakhir: ${esc(a.error)}` : ""}</p>` : ""}
+        <div class="row-link"><input type="password" id="igTok-${acc}" value="${esc(f["igTok-" + acc] || "")}" placeholder="${a.connected ? "Tempel token baru untuk mengganti" : "Tempel token akun " + acc}" autocomplete="off">
+          <button class="btn inline" data-igon="${acc}" ${f.igBusy === acc ? "disabled" : ""}>${f.igBusy === acc ? "Mengecek…" : "Hubungkan"}</button></div>
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
+function bindIgSettings() {
+  if (!isLead()) return;
+  if (!ui.ig && !ui.igLoading) { ui.igLoading = true; loadIg().finally(() => { ui.igLoading = false; }); }
+  keep(IG_ACCS.map((a) => `igTok-${a}`));
+  document.querySelectorAll("[data-igon]").forEach((b) => b.addEventListener("click", async () => {
+    const acc = b.dataset.igon;
+    const token = (ui.form[`igTok-${acc}`] || "").trim();
+    if (!token) return setMsg(`Tempel token akun ${acc} dulu.`, "err");
+    ui.form.igBusy = acc; render();
+    try {
+      const r = await api("/api/ig/connect", { account: acc, token });
+      ui.form = { msg: `${acc} terhubung ke @${r.username} (${nf(r.followers)} followers).`, msgType: "ok" };
+      await loadIg();
+    } catch (e) { ui.form.igBusy = ""; ui.form.msg = e.message; ui.form.msgType = "err"; }
+    render();
+  }));
+  document.querySelectorAll("[data-igoff]").forEach((b) => b.addEventListener("click", async () => {
+    try { await api("/api/ig/disconnect", { account: b.dataset.igoff }); ui.form = { msg: `${b.dataset.igoff} dilepas.`, msgType: "ok" }; await loadIg(); }
+    catch (e) { ui.form = { msg: e.message, msgType: "err" }; }
+    render();
+  }));
+}
+
 // ---------- Login ----------
 function loginView() {
   const f = ui.form;
@@ -1802,6 +1958,7 @@ function settingsWork(f, lead) {
       <button class="btn" data-act="saveSheet" ${f.busySheet ? "disabled" : ""}>${f.busySheet ? "Mengecek file…" : "Pakai file ini"}</button>
     </div>
     ${googleSettings()}
+    ${igSettings()}
     <div class="section">
       <h2>Akun tim</h2>
       <p class="hint">Buat akun, reset password, atau nonaktifkan akun anggota tim.</p>
@@ -1836,6 +1993,7 @@ function googleSettings() {
 function bindSettings() {
   bindCommon();
   bindLook();
+  bindIgSettings();
   keep(["sSheet", "pOld", "pNew", "gCal", "gEp"]);
   if (isLead() && !ui.gcfg) api("/api/google").then((g) => { ui.gcfg = g; if (ui.view === "settings") render(); }).catch((e) => { ui.gcfg = { serviceAccount: "" }; ui.form.msg = e.message; ui.form.msgType = "err"; render(); });
   on("copySa", () => { const el = $("saEmail"); el.select(); navigator.clipboard.writeText(el.value).catch(() => document.execCommand("copy")); setMsg("Email service account disalin.", "ok"); });

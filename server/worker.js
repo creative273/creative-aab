@@ -71,6 +71,11 @@ export default {
         "POST /api/ep/decision": ["lead", () => epDecision(env, body, me)],
         "POST /api/ep/posted": ["content", () => epPosted(env, body, me)],
         "GET /api/calendar": ["content", () => getCalendar(env)],
+        "GET /api/ig": ["all", () => igOverview(env)],
+        "POST /api/ig/connect": ["lead", () => igConnect(env, body)],
+        "POST /api/ig/disconnect": ["lead", () => igDisconnect(env, body)],
+        "POST /api/ig/sync": ["lead", () => igManualSync(env)],
+        "GET /api/ig/new": ["content", () => igNewPosts(env)],
         "POST /api/calendar/save": ["content", () => calendarSave(env, body, me)],
         "POST /api/calendar/toggle": ["content", () => calendarToggle(env, body, me)],
         "GET /api/accounts": ["lead", () => listAccounts(env)],
@@ -88,7 +93,7 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(Promise.all([refresh(env, { force: true }).catch(() => {}), googleRefreshAll(env)]));
+    ctx.waitUntil(Promise.all([refresh(env, { force: true }).catch(() => {}), googleRefreshAll(env), igSync(env).catch(() => {})]));
   },
 };
 
@@ -586,7 +591,7 @@ async function readContent(env, cfg) {
     const hasData = clean(r[1]) || clean(r[6]);
     if (hasData) lastFilled = rowNum;
     const code = shortcode(r[6]);
-    if (code) byCode.set(code, { row: rowNum, konten: clean(r[4]), pillar: clean(r[3]) });
+    if (code) byCode.set(code, { row: rowNum, konten: clean(r[4]), pillar: clean(r[3]), vals: [r[7], r[8], r[9], r[10]] });
   });
   return { byCode, nextRow: lastFilled + 1 };
 }
@@ -1253,6 +1258,279 @@ export function weekPlan(rows, todayISO) {
     else if (r.date < todayISO) a.late++;
   }
   return { start, end, accounts: by };
+}
+
+// ---------- Instagram (v1.4) ----------
+// Instagram API with Instagram Login (graph.instagram.com). Token akun disimpan di KV oleh Ray lewat widget,
+// diperpanjang otomatis sebelum habis (berlaku 60 hari). Paket gratis Cloudflare membatasi 50 subrequest per
+// jalan, jadi tiap cron hanya memperbarui sebagian konten (bergiliran).
+const IG_HOST = "https://graph.instagram.com";
+const IG_VER = "v25.0";
+export const IG_ACCOUNTS = ["AAB", "NUSANTARA"];
+const IG_MEDIA_PER_RUN = 6;
+const IG_PROFILE_EVERY_MS = 3 * 3600 * 1000;
+const IG_MEDIA_FRESH_MS = 2 * 3600 * 1000;
+const IG_KEEP_DAYS = 90;
+const IG_MEDIA_DAYS = 60;
+const IG_SHEET_EVERY_MS = 60 * 60 * 1000;
+
+async function ig(path, token, params = {}) {
+  const u = new URL(`${IG_HOST}/${path.startsWith("refresh_access_token") ? "" : IG_VER + "/"}${path}`);
+  Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
+  u.searchParams.set("access_token", token);
+  const res = await fetch(u.toString());
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) {
+    const e = fail(`Instagram: ${(data.error && data.error.message) || res.status}`, res.status === 400 || res.status === 401 || res.status === 403 ? 409 : 502);
+    e.igCode = data.error && data.error.code;
+    throw e;
+  }
+  return data;
+}
+
+const wibDay = (ms = Date.now()) => new Date(ms + 7 * 3600 * 1000).toISOString().slice(0, 10);
+const wibDayStart = (iso) => Math.floor((Date.parse(`${iso}T00:00:00Z`) - 7 * 3600 * 1000) / 1000);
+
+async function igTokens(env) {
+  return (await env.STORE.get("ig:accounts", "json")) || {};
+}
+
+async function igConnect(env, body) {
+  const account = clean(body.account).toUpperCase();
+  if (!IG_ACCOUNTS.includes(account)) throw fail("Pilih akun AAB atau NUSANTARA.");
+  const token = clean(body.token);
+  if (!/^[A-Za-z0-9_\-|.]{40,}$/.test(token)) throw fail("Token tidak dikenali. Salin ulang token dari halaman Meta for Developers.");
+  const me = await ig("me", token, { fields: "user_id,username,account_type,followers_count,media_count" });
+  const tokens = await igTokens(env);
+  const other = Object.entries(tokens).find(([k, v]) => k !== account && v.userId === String(me.user_id || me.id));
+  if (other) throw fail(`Token ini milik @${me.username}, yang sudah terhubung sebagai ${other[0]}.`);
+  tokens[account] = { token, userId: String(me.user_id || me.id), username: me.username, setAt: Date.now(), refreshedAt: Date.now(), expiresAt: Date.now() + 60 * 864e5 };
+  await env.STORE.put("ig:accounts", JSON.stringify(tokens));
+  await env.STORE.delete(`ig:data:${account}`);
+  await igSyncAccount(env, account, tokens[account], { force: true });
+  return { ok: true, account, username: me.username, accountType: me.account_type, followers: me.followers_count };
+}
+
+async function igDisconnect(env, body) {
+  const account = clean(body.account).toUpperCase();
+  const tokens = await igTokens(env);
+  delete tokens[account];
+  await env.STORE.put("ig:accounts", JSON.stringify(tokens));
+  await env.STORE.delete(`ig:data:${account}`);
+  return { ok: true };
+}
+
+const kategoriOf = (m) => (m.media_product_type === "REELS" || m.media_type === "VIDEO" ? "Reels/VT" : m.media_type === "CAROUSEL_ALBUM" ? "Carousel" : "Feed");
+
+async function igMediaInsights(token, m) {
+  const want = m.type === "CAROUSEL_ALBUM" ? ["reach", "likes", "comments", "shares", "saved", "views"] : ["views", "reach", "likes", "comments", "shares", "saved"];
+  let data;
+  try {
+    data = await ig(`${m.id}/insights`, token, { metric: want.join(",") });
+  } catch (e) {
+    // Sebagian tipe konten tidak punya metrik views: ulangi tanpa views.
+    data = await ig(`${m.id}/insights`, token, { metric: want.filter((x) => x !== "views").join(",") });
+  }
+  const out = {};
+  for (const d of data.data || []) out[d.name] = (d.values && d.values[0] && d.values[0].value) ?? (d.total_value && d.total_value.value) ?? 0;
+  return out;
+}
+
+async function igSyncAccount(env, account, t, { force = false } = {}) {
+  const key = `ig:data:${account}`;
+  const prev = (await env.STORE.get(key, "json")) || { account, daily: {}, media: [] };
+  const data = JSON.parse(JSON.stringify(prev));
+  data.account = account;
+  data.username = t.username;
+  const now = Date.now();
+  const today = wibDay(now);
+  if (force || !data.profileAt || now - data.profileAt > IG_PROFILE_EVERY_MS) {
+    const me = await ig("me", t.token, { fields: "username,followers_count,media_count,profile_picture_url" });
+    data.followers = me.followers_count || 0;
+    data.mediaCount = me.media_count || 0;
+    data.picture = me.profile_picture_url || "";
+    data.username = me.username;
+    const list = await ig("me/media", t.token, { fields: "id,caption,media_type,media_product_type,permalink,shortcode,timestamp,thumbnail_url,media_url,like_count,comments_count", limit: "50" });
+    const old = new Map((data.media || []).map((m) => [m.id, m]));
+    const cutoff = now - IG_MEDIA_DAYS * 864e5;
+    data.media = (list.data || [])
+      .filter((m) => Date.parse(m.timestamp) >= cutoff)
+      .map((m) => {
+        const o = old.get(m.id) || {};
+        return {
+          id: m.id, code: m.shortcode || shortcode(m.permalink), permalink: m.permalink,
+          caption: clean(m.caption).slice(0, 160), type: m.media_type, product: m.media_product_type, kategori: kategoriOf(m),
+          timestamp: m.timestamp, thumb: m.thumbnail_url || (m.media_type === "IMAGE" ? m.media_url : "") || "",
+          likes: m.like_count ?? o.likes ?? 0, comments: m.comments_count ?? o.comments ?? 0,
+          views: o.views ?? null, reach: o.reach ?? null, shares: o.shares ?? null, saved: o.saved ?? null, insightsAt: o.insightsAt || 0,
+        };
+      });
+    // Insight akun hari ini dan kemarin (kemarin final setelah lewat tengah malam WIB).
+    for (const day of [today, wibDay(now - 864e5)]) {
+      if (day !== today && data.daily[day] && data.daily[day].final) continue;
+      const since = wibDayStart(day);
+      const until = Math.min(since + 86400, Math.floor(now / 1000));
+      const ins = await ig("me/insights", t.token, { metric: "views,reach,total_interactions,accounts_engaged", period: "day", metric_type: "total_value", since: String(since), until: String(until) }).catch(() => null);
+      const row = data.daily[day] || {};
+      for (const d of (ins && ins.data) || []) row[d.name] = (d.total_value && d.total_value.value) || 0;
+      if (day === today) row.followers = data.followers;
+      if (day !== today) row.final = true;
+      data.daily[day] = row;
+    }
+    const keep = wibDay(now - IG_KEEP_DAYS * 864e5);
+    Object.keys(data.daily).forEach((d) => { if (d < keep) delete data.daily[d]; });
+    data.profileAt = now;
+  }
+  // Insight per konten, bergiliran: konten seminggu terakhir didahulukan.
+  const week = now - 7 * 864e5;
+  const queue = (data.media || [])
+    .filter((m) => force || now - (m.insightsAt || 0) > IG_MEDIA_FRESH_MS)
+    .sort((a, b) => (Date.parse(b.timestamp) >= week) - (Date.parse(a.timestamp) >= week) || (a.insightsAt || 0) - (b.insightsAt || 0))
+    .slice(0, force ? 10 : IG_MEDIA_PER_RUN);
+  for (const m of queue) {
+    try {
+      const s = await igMediaInsights(t.token, m);
+      Object.assign(m, { views: s.views ?? m.views, reach: s.reach ?? m.reach, likes: s.likes ?? m.likes, comments: s.comments ?? m.comments, shares: s.shares ?? m.shares, saved: s.saved ?? m.saved, insightsAt: now });
+    } catch (e) {
+      m.insightsAt = now; // jangan diulang terus kalau Instagram menolak satu konten
+      if (e.status === 409) break; // token bermasalah: berhenti
+    }
+  }
+  data.updatedAt = now;
+  const strip = (o) => JSON.stringify({ ...o, updatedAt: 0, profileAt: 0, media: o.media.map((m) => ({ ...m, insightsAt: 0 })) });
+  if (force || strip(prev) !== strip(data) || now - (prev.savedAt || 0) > 3 * 3600 * 1000) {
+    data.savedAt = now;
+    await env.STORE.put(key, JSON.stringify(data));
+  }
+  return data;
+}
+
+// Perpanjang token kalau sisa kurang dari 15 hari (Instagram mewajibkan token berumur minimal 24 jam).
+async function igRefreshTokens(env, tokens) {
+  let changed = false;
+  for (const [acc, t] of Object.entries(tokens)) {
+    if (t.expiresAt - Date.now() > 15 * 864e5 || Date.now() - t.refreshedAt < 864e5) continue;
+    try {
+      const r = await ig("refresh_access_token", t.token, { grant_type: "ig_refresh_token" });
+      t.token = r.access_token;
+      t.refreshedAt = Date.now();
+      t.expiresAt = Date.now() + (r.expires_in || 60 * 86400) * 1000;
+      t.error = "";
+    } catch (e) {
+      t.error = e.message;
+    }
+    tokens[acc] = t;
+    changed = true;
+  }
+  if (changed) await env.STORE.put("ig:accounts", JSON.stringify(tokens));
+}
+
+async function igSync(env, { force = false } = {}) {
+  const tokens = await igTokens(env);
+  if (!Object.keys(tokens).length) return { ok: true, synced: 0 };
+  await igRefreshTokens(env, tokens);
+  let synced = 0;
+  for (const acc of IG_ACCOUNTS) {
+    if (!tokens[acc]) continue;
+    try { await igSyncAccount(env, acc, tokens[acc], { force }); synced++; } catch (e) {
+      tokens[acc].error = e.message;
+      await env.STORE.put("ig:accounts", JSON.stringify(tokens));
+    }
+  }
+  await igSheetSync(env).catch(() => {});
+  return { ok: true, synced };
+}
+
+// Semua konten IG yang dikenal server, digabung per shortcode. Konten yang muncul di dua akun = COLLABORATION.
+async function igAllMedia(env) {
+  const byCode = new Map();
+  for (const acc of IG_ACCOUNTS) {
+    const d = await env.STORE.get(`ig:data:${acc}`, "json");
+    for (const m of (d && d.media) || []) {
+      const hit = byCode.get(m.code);
+      if (hit) { hit.account = "COLLABORATION"; continue; }
+      byCode.set(m.code, { ...m, account: acc });
+    }
+  }
+  return byCode;
+}
+
+const sheetMetrics = (m) => [m.views ?? 0, m.likes ?? 0, m.comments ?? 0, (m.shares ?? 0) + (m.saved ?? 0)];
+
+// Isi otomatis Views/Likes/Comment/Share & Save di blok CONTENT untuk konten yang sudah ada di sheet (tiap jam).
+async function igSheetSync(env, { force = false } = {}) {
+  const cfg = await env.STORE.get("config", "json");
+  if (!cfg) return { updated: 0 };
+  const meta = (await env.STORE.get("ig:sheet", "json")) || {};
+  if (!force && meta.at && Date.now() - meta.at < IG_SHEET_EVERY_MS) return { updated: 0 };
+  const media = await igAllMedia(env);
+  if (!media.size) return { updated: 0 };
+  const { byCode } = await readContent(env, cfg);
+  const ranges = [];
+  for (const [code, hit] of byCode) {
+    const m = media.get(code);
+    if (!m || (m.views === null && m.reach === null)) continue; // insight konten belum terambil
+    const next = sheetMetrics(m);
+    if (m.views === null) next[0] = toNumber(hit.vals[0]); // Instagram tidak memberi views: biarkan angka di sheet
+    if (next.some((v, i) => v !== toNumber(hit.vals[i]))) ranges.push({ range: `${cfg.reportId}!H${hit.row}:K${hit.row}`, values: [next] });
+  }
+  if (ranges.length) await writeRanges(env, cfg, ranges);
+  await env.STORE.put("ig:sheet", JSON.stringify({ at: Date.now(), updated: ranges.length }));
+  return { updated: ranges.length };
+}
+
+// Untuk halaman Insight IG (semua akun boleh lihat).
+async function igOverview(env) {
+  const tokens = await igTokens(env);
+  const sheet = (await env.STORE.get("ig:sheet", "json")) || {};
+  const accounts = {};
+  for (const acc of IG_ACCOUNTS) {
+    const t = tokens[acc];
+    const d = await env.STORE.get(`ig:data:${acc}`, "json");
+    accounts[acc] = {
+      connected: !!t,
+      username: (d && d.username) || (t && t.username) || "",
+      error: (t && t.error) || "",
+      expiresAt: t ? t.expiresAt : null,
+      followers: d ? d.followers : null,
+      mediaCount: d ? d.mediaCount : null,
+      picture: d ? d.picture : "",
+      daily: d ? d.daily : {},
+      media: d ? d.media.map(({ id, code, permalink, caption, kategori, timestamp, thumb, views, reach, likes, comments, shares, saved }) => ({ id, code, permalink, caption, kategori, timestamp, thumb, views, reach, likes, comments, shares, saved })) : [],
+      updatedAt: d ? d.updatedAt : null,
+    };
+  }
+  return { ok: true, accounts, sheetSyncAt: sheet.at || null, sheetUpdated: sheet.updated || 0 };
+}
+
+// Untuk Zahra: konten IG 45 hari terakhir yang belum ada di blok CONTENT.
+async function igNewPosts(env) {
+  const cfg = await getConfig(env);
+  const media = await igAllMedia(env);
+  const { byCode } = await readContent(env, cfg);
+  const cutoff = Date.now() - 45 * 864e5;
+  const items = [...media.values()]
+    .filter((m) => !byCode.has(m.code) && Date.parse(m.timestamp) >= cutoff)
+    .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+    .map((m) => {
+      const d = new Date(Date.parse(m.timestamp) + 7 * 3600 * 1000);
+      return {
+        code: m.code, link: m.permalink, account: m.account, kategori: m.kategori, caption: m.caption, thumb: m.thumb,
+        tanggal: `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`,
+        views: m.views ?? 0, likes: m.likes ?? 0, comments: m.comments ?? 0, shares: (m.shares ?? 0) + (m.saved ?? 0),
+        insightsReady: m.views !== null,
+      };
+    });
+  return { ok: true, items };
+}
+
+let lastIgManual = 0;
+async function igManualSync(env) {
+  if (Date.now() - lastIgManual < 60 * 1000) return igOverview(env);
+  lastIgManual = Date.now();
+  await igSync(env, { force: false });
+  await igSheetSync(env, { force: true }).catch(() => {});
+  return igOverview(env);
 }
 
 // ---------- Helpers ----------
