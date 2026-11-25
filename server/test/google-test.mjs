@@ -262,7 +262,7 @@ assert.equal(calls.filter((c) => c.includes("googleapis")).length, g1, "klik ber
 let puts = 0;
 const origPut = env.STORE.put;
 env.STORE.put = async (k, v, o) => { if (k === "epcache" || k === "calcache") puts++; return origPut(k, v, o); };
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: Date.UTC(2026, 10, 25, 3, 0) }, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.equal(puts, 0, "data sama: cache EP dan kalender tidak ditulis ulang");
 env.STORE.put = origPut;
@@ -286,7 +286,7 @@ assert.deepEqual(wp.accounts, { AAB: { planned: 3, posted: 1, late: 1 }, NUSANTA
 
 // Cron menyegarkan kalender dan EP
 const before = calls.length;
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: Date.UTC(2026, 10, 25, 3, 0) }, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.ok(calls.slice(before).some((c) => c.includes("slides.googleapis.com")));
 

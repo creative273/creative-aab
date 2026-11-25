@@ -189,7 +189,7 @@ Data yang sudah masuk ke sheet tetap ada.
 | "Login ke Google gagal" | Isi `GOOGLE_SA` tidak lengkap. Tempel ulang seluruh isi file JSON. |
 | "Tidak ada tab content plan di file ini" | Link yang ditempel bukan file Content Calendar, atau header baris 3 berubah (# , Content Pillar, Format, Platform, Content, Date). |
 | "Token Instagram ditolak" atau Insight menampilkan "Sinkron terakhir gagal" | Token salah salin, dicabut, atau password IG diganti. Buat token baru (langkah G5) dan tempel lagi di Pengaturan. |
-| "Ambil postingan baru" kosong padahal ada post baru | Daftar postingan diambil tiap 3 jam. Ray bisa klik **Sinkron sekarang** di Insight Instagram, lalu coba lagi. |
+| "Ambil postingan baru" kosong padahal ada post baru | Daftar postingan diambil tiap 30 menit. Ray bisa klik **Sinkron sekarang** di Insight Instagram, lalu coba lagi. |
 | "Cek pembaruan gagal" | Biasanya internet. Kalau terus muncul, unduh installer terbaru dari halaman Releases dan pasang di atas versi lama. |
 | "Login ke Lark gagal" | App ID atau App Secret di Cloudflare salah, atau app belum di-publish (langkah A4). |
 | "Lark menolak … App belum punya akses ke file ini" | Ulangi langkah B1 untuk file bulan ini. |
