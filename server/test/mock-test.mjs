@@ -65,9 +65,38 @@ function igMock(u) {
   return err("unknown " + path);
 }
 
+// Token Login Terpadu (EAA) lewat graph.facebook.com: diterjemahkan ke data IG tiruan di atas.
+const FB = {
+  "EAAaab-ddddddddddddddddddddddddddddddddddddddddddddd": { ids: { "17841471637263858": "tok-aab-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, pages: [] },
+  "EAApage-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": { ids: { "555": "tok-nus-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, pages: [{ id: "p1", instagram_business_account: { id: "555", username: "nusantara.mcn" } }] },
+};
+const fbCalls = [];
+function fbMock(u) {
+  const tok = u.searchParams.get("access_token");
+  fbCalls.push(u.pathname);
+  const acc = FB[tok];
+  if (!acc) return new Response(JSON.stringify({ error: { message: "Invalid OAuth access token - Cannot parse access token", code: 190 } }), { status: 400 });
+  assert.ok(u.pathname.startsWith("/v25.0/"), u.pathname);
+  const parts = u.pathname.slice(7).split("/");
+  if (parts[0] === "me" && parts[1] === "accounts") return new Response(JSON.stringify({ data: acc.pages }));
+  if (parts[0] === "me") return new Response(JSON.stringify({ error: { message: "(#100) Tried accessing nonexisting field", code: 100 } }), { status: 400 });
+  const igTok = acc.ids[parts[0]];
+  const known = Object.values(IG).some((a) => a.id === parts[0] || a.media.some((m) => m.id === parts[0]));
+  if (!igTok && /^\d{6,}$/.test(parts[0]) || (!igTok && !known)) return new Response(JSON.stringify({ error: { message: "(#100) Object does not exist or missing permissions", code: 100 } }), { status: 400 });
+  const x = new URL(u.toString().replace("graph.facebook.com", "graph.instagram.com"));
+  x.pathname = "/v25.0/" + (igTok ? ["me", ...parts.slice(1)] : parts).join("/");
+  x.searchParams.set("access_token", igTok || Object.values(acc.ids)[0]);
+  if (igTok && parts.length === 1) x.searchParams.set("fields", "user_id,username,followers_count,media_count");
+  return Promise.resolve(igMock(x)).then(async (res) => {
+    if (!(igTok && parts.length === 1)) return res;
+    const d = await res.json(); d.id = parts[0]; delete d.user_id; return new Response(JSON.stringify(d));
+  });
+}
+
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url);
   if (u.host === "graph.instagram.com") return igMock(u);
+  if (u.host === "graph.facebook.com") return fbMock(u);
   const body = opts.body ? JSON.parse(opts.body) : null;
   calls.push(`${opts.method || "GET"} ${u.pathname}`);
   const ok = (data) => new Response(JSON.stringify({ code: 0, msg: "success", data }));
@@ -382,5 +411,40 @@ assert.ok(JSON.parse(kv.get("ig:accounts")).AAB.expiresAt > Date.now() + 50 * 86
 assert.equal((await call("POST", "/api/ig/disconnect", { account: "NUSANTARA" })).status, 200);
 r = await call("GET", "/api/ig", null, T.aqil);
 assert.equal(r.data.accounts.NUSANTARA.connected, false);
+
+// 17. Token Login Terpadu (EAA, graph.facebook.com)
+r = await call("POST", "/api/ig/connect", { account: "NUSANTARA", token: "EAAsalah-ffffffffffffffffffffffffffffffffffffffffffff" });
+assert.equal(r.status, 409, JSON.stringify(r.data));
+assert.match(r.data.error, /Invalid OAuth/);
+// ID bawaan akun AAB dipakai langsung
+r = await call("POST", "/api/ig/connect", { account: "AAB", token: "EAAaab-ddddddddddddddddddddddddddddddddddddddddddddd" });
+assert.equal(r.status, 200, JSON.stringify(r.data));
+assert.equal(r.data.username, "agensianakbangsa");
+let acc = JSON.parse(kv.get("ig:accounts")).AAB;
+assert.equal(acc.kind, "fb"); assert.equal(acc.igId, "17841471637263858"); assert.equal(acc.expiresAt, null);
+// ID bawaan tidak cocok: dicari lewat Halaman FB yang tertaut
+r = await call("POST", "/api/ig/connect", { account: "NUSANTARA", token: "EAApage-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" });
+assert.equal(r.status, 200, JSON.stringify(r.data));
+assert.equal(r.data.username, "nusantara.mcn");
+assert.equal(JSON.parse(kv.get("ig:accounts")).NUSANTARA.igId, "555");
+// Token untuk akun lain ditolak dengan pesan jelas
+r = await call("POST", "/api/ig/connect", { account: "NUSANTARA", token: "EAAaab-ddddddddddddddddddddddddddddddddddddddddddddd" });
+assert.equal(r.status, 400);
+// Data tersinkron lewat graph.facebook.com
+r = await call("GET", "/api/ig", null, T.aqil);
+const aab2 = r.data.accounts.AAB;
+assert.equal(aab2.followers, 19400);
+assert.equal(aab2.media.find((m) => m.id === "m1").views, 1300);
+assert.equal(aab2.media.find((m) => m.code === "DgNEWaaaaa1").kategori, "Carousel");
+assert.equal(aab2.expiresAt, null);
+assert.ok(fbCalls.some((p) => p.endsWith("/17841471637263858/media")));
+assert.ok(fbCalls.some((p) => p.endsWith("/17841471637263858/insights")));
+assert.ok(!JSON.stringify(r.data).includes("EAA"), "token EAA tidak boleh bocor");
+// Token EAA tidak pernah diperpanjang
+const refBefore = igCalls.filter((p) => p === "/refresh_access_token").length;
+await worker.scheduled({}, env, { waitUntil: (p) => p });
+await new Promise((res) => setTimeout(res, 50));
+assert.equal(igCalls.filter((p) => p === "/refresh_access_token").length, refBefore);
+assert.equal(JSON.parse(kv.get("ig:accounts")).AAB.error || "", "");
 
 console.log("SEMUA TES LULUS. Panggilan Lark tiruan:", calls.length);
