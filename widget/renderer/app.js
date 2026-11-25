@@ -1771,7 +1771,10 @@ function igView() {
   const vals = days14.map((x) => (d[x] || {}).views || 0);
   const max = Math.max(1, ...vals);
   const media = (a.media || []).slice().sort((x, y) => Date.parse(y.timestamp) - Date.parse(x.timestamp));
-  const recent = media.filter((m) => Date.parse(m.timestamp) >= Date.now() - (ui.igRange === 30 ? 30 : 7) * 864e5);
+  const range = ui.igRange || "7";
+  const now = new Date();
+  const since = range === "bulan" ? new Date(now.getFullYear(), now.getMonth(), 1).getTime() : Date.now() - (range === "30" ? 30 : 7) * 864e5;
+  const recent = media.filter((m) => Date.parse(m.timestamp) >= since);
   const top = recent.slice().sort((x, y) => (y.views ?? y.reach ?? 0) - (x.views ?? x.reach ?? 0)).slice(0, 6);
   const upd = a.updatedAt ? new Date(a.updatedAt) : null;
   return `<div class="home">
@@ -1791,7 +1794,7 @@ function igView() {
       </section>
       <section class="box glass">
         <h2>Konten terbaik
-          <span class="seg mini-seg" role="group" aria-label="Rentang">${[7, 30].map((n) => `<button data-igrange="${n}" aria-pressed="${(ui.igRange || 7) === n}">${n} hari</button>`).join("")}</span></h2>
+          <span class="seg mini-seg" role="group" aria-label="Rentang">${[["7", "7 hari"], ["30", "30 hari"], ["bulan", "Bulan ini"]].map(([k, l]) => `<button data-igrange="${k}" aria-pressed="${range === k}">${l}</button>`).join("")}</span></h2>
         ${top.length ? `<ol class="top-list">${top.map((m) => `<li><a href="${esc(m.permalink)}" target="_blank" rel="noopener">
             ${m.thumb ? `<img src="${esc(m.thumb)}" alt="" loading="lazy">` : `<span class="no-thumb"></span>`}
             <span class="top-cap">${esc(m.caption || "(tanpa caption)")}<small>${esc(fmtDate(isoDay(new Date(m.timestamp))))} · ${esc(m.kategori)}</small></span>
@@ -1816,7 +1819,7 @@ function bindIg() {
   on("igRetry", () => loadIg());
   on("igSync", () => { ui.ig = null; render(); loadIg({ sync: true }); });
   document.querySelectorAll("[data-igacc]").forEach((b) => b.addEventListener("click", () => { ui.igAcc = b.dataset.igacc; render(); }));
-  document.querySelectorAll("[data-igrange]").forEach((b) => b.addEventListener("click", () => { ui.igRange = +b.dataset.igrange; render(); }));
+  document.querySelectorAll("[data-igrange]").forEach((b) => b.addEventListener("click", () => { ui.igRange = b.dataset.igrange; render(); }));
   if (!ui.ig && !ui.igErr && !ui.igLoading) { ui.igLoading = true; loadIg().finally(() => { ui.igLoading = false; }); }
 }
 
