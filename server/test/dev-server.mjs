@@ -152,5 +152,20 @@ http.createServer(async (req, res) => {
       await go("/api/feed/comment", { id: p2.item.id, text: "Warna oranyenya cakep kak!" }, tok.zahra);
     }
   }
+  if (process.env.WITH_MOBILE) {
+    const tz = (await go("/api/login", { username: "zahra", password: "password123" })).token;
+    const ta = (await go("/api/login", { username: "aqil", password: "password123" })).token;
+    const rp = await go("/api/feed/post", { text: "Moodboard event creative minggu depan. Gimana menurut kalian? @zahra @aqil" }, token);
+    await go("/api/feed/react", { id: rp.item.id, reaction: "love" }, tz);
+    await go("/api/feed/comment", { id: rp.item.id, text: "Cover-nya aku bikin versi gelap juga ya @ray" }, ta);
+    await go("/api/feed/comment", { id: rp.item.id, text: "Warna oranyenya cakep kak!" }, tz);
+    const st = await (await worker.fetch(new Request("http://x/api/state", { headers: { Authorization: "Bearer " + token } }), env, {})).json();
+    const rq = st.requests.find((r) => !r.decision && r.status !== "done");
+    if (rq) {
+      const list = JSON.parse(kv.get("notif:ray") || "[]");
+      list.unshift({ id: "nreq1", at: new Date().toISOString(), read: false, type: "request", by: "", requester: rq.user, row: rq.row, reqId: rq.id, text: rq.info, deadline: rq.deadline });
+      kv.set("notif:ray", JSON.stringify(list));
+    }
+  }
   console.log("dev server :8787");
 });

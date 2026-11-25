@@ -206,6 +206,11 @@ assert.equal((await call("POST", "/api/ep/decision", { id: "s_modal", status: "O
 assert.equal((await call("POST", "/api/ep/decision", { id: "s_modal", status: "REVISI" }, RAY)).status, 400, "revisi wajib catatan");
 assert.equal((await call("POST", "/api/ep/decision", { id: "s_modal", status: "SETUJU" }, RAY)).status, 400);
 r = await call("POST", "/api/ep/decision", { id: "s_modal", status: "REVISI", note: "Revisi di kolom VISUAL" }, RAY);
+{
+  const zn = (await call("GET", "/api/notif", null, ZAHRA)).data.items.find((n) => n.type === "ep");
+  assert.ok(zn, "tim dapat notifikasi keputusan EP"); assert.equal(zn.status, "REVISI"); assert.equal(zn.note, "Revisi di kolom VISUAL"); assert.equal(zn.epId, "s_modal");
+  assert.ok(!(await call("GET", "/api/notif", null, RAY)).data.items.some((n) => n.type === "ep"), "Ray tidak dikirimi");
+}
 assert.equal(r.status, 200);
 assert.deepEqual([r.data.items.find((x) => x.id === "s_modal").decision.status, r.data.items.find((x) => x.id === "s_modal").decision.note], ["REVISI", "Revisi di kolom VISUAL"]);
 r = await call("GET", "/api/ep", null, AQIL);

@@ -83,6 +83,28 @@ Widget otomatis terbuka saat Windows menyala. Tombol − menyembunyikannya ke tr
 - **Minta semua update (versi 1.5.2, khusus Ray)**: setelah rilis baru, update widget Ray dulu. Lalu di **Pengaturan → Aplikasi**, lihat daftar **Versi aplikasi tim** dan klik **Kirim pop-up: minta semua update**. Laptop yang belum di versi itu mendapat pop-up dalam 1 menit, dan widgetnya langsung mulai mengunduh pembaruan. Versi tiap orang tercatat otomatis mulai versi 1.5.2.
 - **Tag dan notifikasi (versi 1.5.1)**: ketik `@` di postingan atau komentar, lalu pilih nama dari daftar (panah atas/bawah lalu Enter, atau klik). Orang yang ditag, pemilik postingan yang dikomentari, orang yang sudah ikut berkomentar, dan pemilik postingan yang diberi reaksi mendapat notifikasi. Lonceng di kanan atas menampilkan jumlah yang belum dibaca. Klik satu notifikasi untuk membuka postingannya. Notifikasi baru juga muncul sebagai pop-up di pojok layar (dicek tiap 1 menit).
 
+## Versi HP (versi 1.6)
+
+Versi HP isinya ringan: **notifikasi** untuk semua akun, plus **approval** request dan EP khusus Ray. Input KPI dan posting tetap lewat laptop.
+
+**Alamat:** `https://<alamat-worker>/m/`, alamat Worker yang sama dengan yang diisi di aplikasi laptop, ditambah `/m/`.
+
+**Pasang di Android (Chrome):**
+1. Buka alamat di atas di Chrome, lalu login dengan username dan password yang sama dengan laptop.
+2. Ketuk menu ⋮ → **Tambahkan ke layar utama** (atau **Instal aplikasi**).
+3. Buka Creative AAB dari layar utama → tab **Akun** → **Nyalakan notifikasi di HP ini** → **Izinkan**.
+
+**Pasang di iPhone (Safari, iOS 16.4 ke atas):**
+1. Buka alamat di atas di **Safari** (bukan Chrome).
+2. Ketuk tombol **Share** (kotak dengan panah ke atas) → **Add to Home Screen** → **Add**.
+3. Buka Creative AAB dari layar utama, login → tab **Akun** → **Nyalakan notifikasi di HP ini** → **Allow**. Di iPhone, notifikasi hanya jalan kalau dibuka dari layar utama.
+
+**Yang masuk sebagai notifikasi:** ditandai (@), komentar di postinganmu, balasan diskusi, request baru (khusus Ray), keputusan EP (OKE atau revisi, untuk tim), reaksi (mati bawaan, bisa dinyalakan), dan permintaan update aplikasi laptop. Tiap jenis bisa dimatikan di tab **Akun**, per HP.
+
+**Approval (Ray):** tab **Approval** berisi request yang belum diputuskan (Approve, Pending, Reject) dan slide EP yang belum diputuskan (OKE, atau Revisi dengan catatan). Keputusan langsung tertulis ke sheet dan EP, dan tim dapat notifikasi.
+
+Notifikasi request baru dicek bersama jadwal sheet (tiap 10 menit di jam kerja). Notifikasi HP tidak butuh pengaturan tambahan di Cloudflare: kunci notifikasi dibuat otomatis oleh server saat pertama dipakai.
+
 ## Akun dan akses
 
 | Akun | Akses |
