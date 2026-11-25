@@ -48,7 +48,7 @@ Urutan setup: **A. Lark → B. Sheet → C. Cloudflare → D. Widget**. Cukup se
    - `LARK_APP_ID`, tipe Text: App ID dari langkah A5
    - `LARK_APP_SECRET`, tipe **Secret**: App Secret Lark
    - `ADMIN_PASSWORD`, tipe **Secret**: password awal akun `ray`, minimal 12 karakter campur huruf dan angka. Jangan dibagikan ke siapa pun. Password ini juga jalan masuk kalau Ray lupa password.
-6. **Jadwal cek otomatis.** Buka **Settings → Trigger Events → Cron Triggers → Add**, isi `*/10 1-11 * * 1-6`. Artinya tiap 10 menit, Senin sampai Sabtu, jam 08.00 sampai 18.59 WIB.
+6. **Jadwal cek otomatis.** Buka **Settings → Trigger Events → Cron Triggers → Add**, isi `*/10 * * * *` (mulai versi 1.5.3). Server sendiri yang mengatur: sheet Lark dan Google dicek tiap 10 menit di jam kerja (Senin sampai Sabtu, 08.00 sampai 18.59 WIB). Di luar jam itu dan hari Minggu, hanya Instagram yang diperbarui, tiap 30 menit, tanpa menyentuh sheet.
 7. **Cek server.** Buka alamat Worker di browser (contoh `https://creative-aab.namakamu.workers.dev`). Harus muncul `{"ok":true,"app":"creative-aab","auth":"accounts"}`.
 
 ## D. Widget di laptop
@@ -82,6 +82,28 @@ Widget otomatis terbuka saat Windows menyala. Tombol − menyembunyikannya ke tr
 - Timeline menyimpan 300 item terakhir. Foto postingan dikompres otomatis.
 - **Minta semua update (versi 1.5.2, khusus Ray)**: setelah rilis baru, update widget Ray dulu. Lalu di **Pengaturan → Aplikasi**, lihat daftar **Versi aplikasi tim** dan klik **Kirim pop-up: minta semua update**. Laptop yang belum di versi itu mendapat pop-up dalam 1 menit, dan widgetnya langsung mulai mengunduh pembaruan. Versi tiap orang tercatat otomatis mulai versi 1.5.2.
 - **Tag dan notifikasi (versi 1.5.1)**: ketik `@` di postingan atau komentar, lalu pilih nama dari daftar (panah atas/bawah lalu Enter, atau klik). Orang yang ditag, pemilik postingan yang dikomentari, orang yang sudah ikut berkomentar, dan pemilik postingan yang diberi reaksi mendapat notifikasi. Lonceng di kanan atas menampilkan jumlah yang belum dibaca. Klik satu notifikasi untuk membuka postingannya. Notifikasi baru juga muncul sebagai pop-up di pojok layar (dicek tiap 1 menit).
+
+## Versi HP (versi 1.6)
+
+Versi HP isinya ringan: **notifikasi** untuk semua akun, plus **approval** request dan EP khusus Ray. Input KPI dan posting tetap lewat laptop.
+
+**Alamat:** `https://<alamat-worker>/m/`, alamat Worker yang sama dengan yang diisi di aplikasi laptop, ditambah `/m/`.
+
+**Pasang di Android (Chrome):**
+1. Buka alamat di atas di Chrome, lalu login dengan username dan password yang sama dengan laptop.
+2. Ketuk menu ⋮ → **Tambahkan ke layar utama** (atau **Instal aplikasi**).
+3. Buka Creative AAB dari layar utama → tab **Akun** → **Nyalakan notifikasi di HP ini** → **Izinkan**.
+
+**Pasang di iPhone (Safari, iOS 16.4 ke atas):**
+1. Buka alamat di atas di **Safari** (bukan Chrome).
+2. Ketuk tombol **Share** (kotak dengan panah ke atas) → **Add to Home Screen** → **Add**.
+3. Buka Creative AAB dari layar utama, login → tab **Akun** → **Nyalakan notifikasi di HP ini** → **Allow**. Di iPhone, notifikasi hanya jalan kalau dibuka dari layar utama.
+
+**Yang masuk sebagai notifikasi:** ditandai (@), komentar di postinganmu, balasan diskusi, request baru (khusus Ray), keputusan EP (OKE atau revisi, untuk tim), reaksi (mati bawaan, bisa dinyalakan), dan permintaan update aplikasi laptop. Tiap jenis bisa dimatikan di tab **Akun**, per HP.
+
+**Approval (Ray):** tab **Approval** berisi request yang belum diputuskan (Approve, Pending, Reject) dan slide EP yang belum diputuskan (OKE, atau Revisi dengan catatan). Keputusan langsung tertulis ke sheet dan EP, dan tim dapat notifikasi.
+
+Notifikasi request baru dicek bersama jadwal sheet (tiap 10 menit di jam kerja). Notifikasi HP tidak butuh pengaturan tambahan di Cloudflare: kunci notifikasi dibuat otomatis oleh server saat pertama dipakai.
 
 ## Akun dan akses
 
@@ -130,7 +152,7 @@ Widget mengambil data resmi dari Instagram untuk @agensianakbangsa (AAB) dan Nus
 Yang terjadi setelah terhubung:
 
 - Menu **Insight Instagram** (semua akun tim): followers, views, reach, dan interaksi 7 hari (dibanding 7 hari sebelumnya), grafik views per hari 14 hari, konten terbaik 7 atau 30 hari, dan tabel semua konten 60 hari terakhir. Ray punya tombol **Sinkron sekarang**.
-- Followers, daftar postingan, dan insight akun diambil tiap 3 jam. Angka per konten diperbarui bergiliran tiap 10 menit, konten seminggu terakhir didahulukan. Semua ini berjalan di jadwal server yang sama dengan sheet (Senin sampai Sabtu, 08.00 sampai 18.00 WIB). Instagram sendiri bisa terlambat sampai 48 jam.
+- Followers, daftar postingan, dan insight akun diambil tiap 30 menit, termasuk malam hari dan hari Minggu. Angka per konten diperbarui bergiliran tiap 10 menit, konten seminggu terakhir didahulukan. Penulisan angka ke sheet hanya di jam kerja. Instagram sendiri bisa terlambat sampai 48 jam.
 - **Angka di blok CONTENT terisi otomatis.** Tiap 4 jam (dan saat Ray klik Sinkron sekarang), Views, Likes, Comment, dan Share & Save untuk link yang sudah ada di blok CONTENT diperbarui dari Instagram. Share & Save diisi jumlah share ditambah save. Kalau Instagram tidak memberi angka views (misalnya sebagian carousel), kolom Views dibiarkan seperti semula, kolom lain tetap diperbarui.
 - **Zahra tidak perlu file ABT lagi untuk konten IG.** Di Input KPI klik **Ambil postingan baru**: muncul postingan bulan ini (sesuai sheet bulanan) yang belum ada di sheet, lengkap dengan tanggal, akun (COLLABORATION kalau postingan muncul di kedua akun), kategori, dan angka. Zahra tinggal isi nama konten dan pilih pillar, lalu kirim. Upload file ABT tetap ada sebagai cadangan.
 
@@ -189,7 +211,7 @@ Data yang sudah masuk ke sheet tetap ada.
 | "Login ke Google gagal" | Isi `GOOGLE_SA` tidak lengkap. Tempel ulang seluruh isi file JSON. |
 | "Tidak ada tab content plan di file ini" | Link yang ditempel bukan file Content Calendar, atau header baris 3 berubah (# , Content Pillar, Format, Platform, Content, Date). |
 | "Token Instagram ditolak" atau Insight menampilkan "Sinkron terakhir gagal" | Token salah salin, dicabut, atau password IG diganti. Buat token baru (langkah G5) dan tempel lagi di Pengaturan. |
-| "Ambil postingan baru" kosong padahal ada post baru | Daftar postingan diambil tiap 3 jam. Ray bisa klik **Sinkron sekarang** di Insight Instagram, lalu coba lagi. |
+| "Ambil postingan baru" kosong padahal ada post baru | Daftar postingan diambil tiap 30 menit. Ray bisa klik **Sinkron sekarang** di Insight Instagram, lalu coba lagi. |
 | "Cek pembaruan gagal" | Biasanya internet. Kalau terus muncul, unduh installer terbaru dari halaman Releases dan pasang di atas versi lama. |
 | "Login ke Lark gagal" | App ID atau App Secret di Cloudflare salah, atau app belum di-publish (langkah A4). |
 | "Lark menolak … App belum punya akses ke file ini" | Ulangi langkah B1 untuk file bulan ini. |

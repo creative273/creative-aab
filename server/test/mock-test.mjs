@@ -98,8 +98,15 @@ function fbMock(u) {
   });
 }
 
+// Layanan push tiruan (FCM / Apple). Endpoint berisi "gone" dianggap sudah tidak berlaku.
+const pushCalls = [];
+async function pushMock(u, opts) {
+  pushCalls.push({ url: u.toString(), auth: opts.headers.Authorization });
+  return new Response(null, { status: u.pathname.includes("gone") ? 410 : 201 });
+}
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url);
+  if (u.host === "fcm.googleapis.com" || u.host === "web.push.apple.com") return pushMock(u, opts);
   if (u.host === "graph.instagram.com") return igMock(u);
   if (u.host === "graph.facebook.com") return fbMock(u);
   const body = opts.body ? JSON.parse(opts.body) : null;
@@ -121,6 +128,7 @@ globalThis.fetch = async (url, opts = {}) => {
 };
 
 const kv = new Map();
+const WORK_TIME = Date.UTC(2026, 10, 25, 3, 0); // Rabu 10.00 WIB
 let kvPuts = 0;
 const kvWrites = () => kvPuts;
 const env = {
@@ -283,7 +291,7 @@ r = await call("POST", "/api/kpi/aigc", { tanggal: "26/11/2026", produksi: 1, up
 assert.equal(r.status, 400);
 
 // 12. Cron
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
 
 // 13. Role: tiap akun hanya blok miliknya
 const deny = async (tok, path, body) => assert.equal((await call("POST", path, body, tok)).status, 403, path);
@@ -404,14 +412,14 @@ for (let i = 6; i < 60; i++) if (String(grid[REPORT]["G" + i] || "").includes("D
 assert.ok(carRow, "baris carousel ditemukan");
 write(`${REPORT}!H${carRow}:K${carRow}`, [[777, 1, 1, 1]]);
 kv.delete("ig:sheet"); // sinkron sheet jalan lagi di cron berikutnya
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.deepEqual(read(`${REPORT}!H${carRow}:K${carRow}`)[0], [777, 30, 4, 7]);
 // Token hampir habis diperpanjang otomatis lewat cron
 const tk = JSON.parse(kv.get("ig:accounts"));
 tk.AAB.expiresAt = Date.now() + 5 * 864e5; tk.AAB.refreshedAt = Date.now() - 2 * 864e5;
 kv.set("ig:accounts", JSON.stringify(tk));
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.ok(igCalls.includes("/refresh_access_token"));
 assert.ok(JSON.parse(kv.get("ig:accounts")).AAB.expiresAt > Date.now() + 50 * 864e5);
@@ -450,7 +458,7 @@ assert.ok(fbCalls.some((p) => p.endsWith("/17841471637263858/insights")));
 assert.ok(!JSON.stringify(r.data).includes("EAA"), "token EAA tidak boleh bocor");
 // Token EAA tidak pernah diperpanjang
 const refBefore = igCalls.filter((p) => p === "/refresh_access_token").length;
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.equal(igCalls.filter((p) => p === "/refresh_access_token").length, refBefore);
 assert.equal(JSON.parse(kv.get("ig:accounts")).AAB.error || "", "");
@@ -467,7 +475,7 @@ for (let run = 0; run < 4; run++) {
   // anggap insight sudah basi supaya cron mengambil ulang
   const d = JSON.parse(kv.get("ig:data:NUSANTARA")); d.media.forEach((m) => { if (m.views === null) m.insightsAt = 0; }); kv.set("ig:data:NUSANTARA", JSON.stringify(d));
   const n0 = fbCalls.filter((x) => x.includes("/b")).length;
-  await worker.scheduled({}, env, { waitUntil: (p) => p });
+  await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
   await new Promise((res) => setTimeout(res, 50));
   const used = fbCalls.filter((x) => x.includes("/b")).length - n0;
   assert.ok(used <= 9, "jatah per jalan: " + used);
@@ -486,7 +494,7 @@ const d3 = JSON.parse(kv.get("ig:data:NUSANTARA"));
 d3.media.forEach((m) => { m.insightError = ""; m.insightsAt = Date.now(); });
 d3.media.slice(20, 24).forEach((m) => { m.views = null; m.reach = null; });
 kv.set("ig:data:NUSANTARA", JSON.stringify(d3));
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.equal(JSON.parse(kv.get("ig:data:NUSANTARA")).media.slice(20, 24).filter((m) => m.views === null).length, 0, "konten kosong didahulukan");
 
@@ -624,5 +632,95 @@ assert.equal(nu.type, "update"); assert.equal(nu.version, "1.5.2"); assert.match
 assert.equal((await call("GET", "/api/notif", null, T.aqil)).data.unread, 0);
 r = await call("GET", "/api/app/versions");
 assert.equal(r.data.versions.find((x) => x.username === "aqil").version, "1.5.2");
+
+// 22. Jadwal: di luar jam kerja hanya Instagram tiap 30 menit, sheet Lark tidak disentuh
+{
+  const sunday = Date.UTC(2026, 10, 29, 13, 0); // Minggu 20.00 WIB
+  const l0 = calls.length, f0 = fbCalls.length + igCalls.length;
+  const dd = JSON.parse(kv.get("ig:data:AAB")); dd.profileAt = 0; kv.set("ig:data:AAB", JSON.stringify(dd));
+  await worker.scheduled({ scheduledTime: sunday }, env, { waitUntil: (p) => p });
+  await new Promise((res) => setTimeout(res, 50));
+  assert.equal(calls.length - l0, 0, "Minggu malam: Lark tidak dipanggil");
+  assert.ok(fbCalls.length + igCalls.length > f0, "Minggu malam: Instagram tetap diperbarui");
+  const f1 = fbCalls.length + igCalls.length;
+  await worker.scheduled({ scheduledTime: sunday + 15 * 60000 }, env, { waitUntil: (p) => p });
+  await new Promise((res) => setTimeout(res, 50));
+  assert.equal(fbCalls.length + igCalls.length - f1, 0, "menit 15: dilewati");
+  const l1 = calls.length;
+  await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
+  await new Promise((res) => setTimeout(res, 50));
+  assert.ok(calls.length > l1, "jam kerja: sheet diperbarui");
+}
+
+// 23. Versi HP dan push (v1.6)
+{
+  // halaman HP tersaji tanpa login
+  let res = await worker.fetch(new Request("https://x.workers.dev/m/"), env, {});
+  assert.equal(res.status, 200); assert.match(res.headers.get("Content-Type"), /text\/html/); assert.match(await res.text(), /manifest\.webmanifest/);
+  res = await worker.fetch(new Request("https://x.workers.dev/m/sw.js"), env, {});
+  assert.equal(res.headers.get("Service-Worker-Allowed"), "/m/");
+  res = await worker.fetch(new Request("https://x.workers.dev/m/icon-192.png"), env, {});
+  assert.equal(res.headers.get("Content-Type"), "image/png"); assert.equal(new Uint8Array(await res.arrayBuffer())[1], 0x50, "PNG");
+  assert.equal((await worker.fetch(new Request("https://x.workers.dev/m/rahasia.txt"), env, {})).status, 404);
+  // kunci VAPID dibuat sekali, kunci privat tidak keluar
+  r = await call("GET", "/api/push", null, T.zahra);
+  const key1 = r.data.key; assert.equal(r.data.subscribed, false);
+  assert.equal((await call("GET", "/api/push", null, T.aqil)).data.key, key1);
+  assert.ok(!JSON.stringify(r.data).includes('"d"'), "kunci privat tidak dikirim");
+  assert.equal((await call("POST", "/api/push/subscribe", { subscription: { endpoint: "http://jahat" } }, T.zahra)).status, 400);
+  r = await call("POST", "/api/push/subscribe", { subscription: { endpoint: "https://fcm.googleapis.com/fcm/send/zahra1" }, prefs: { react: false }, device: "Android" }, T.zahra);
+  assert.equal(r.status, 200); assert.equal(r.data.prefs.mention, true); assert.equal(r.data.prefs.react, false);
+  await call("POST", "/api/push/subscribe", { subscription: { endpoint: "https://web.push.apple.com/gone-zahra" } }, T.zahra);
+  r = await call("GET", "/api/push?endpoint=" + encodeURIComponent("https://fcm.googleapis.com/fcm/send/zahra1"), null, T.zahra);
+  assert.equal(r.data.subscribed, true);
+  // tag -> push ke dua HP Zahra, HP yang "gone" dihapus
+  const p0 = pushCalls.length;
+  r = await call("POST", "/api/feed/post", { text: "Cek ini @zahra" }, T.aqil);
+  assert.equal(pushCalls.length - p0, 2);
+  const pc = pushCalls[pushCalls.length - 1];
+  const m = pc.auth.match(/^vapid t=([^,]+), k=(.+)$/);
+  assert.ok(m, pc.auth); assert.equal(m[2], key1);
+  // tanda tangan JWT bisa diverifikasi dengan kunci publik
+  const [h, c, sg] = m[1].split(".");
+  const dec = (x) => Uint8Array.from(atob(x.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((x.length + 3) % 4)), (ch) => ch.charCodeAt(0));
+  const claims = JSON.parse(new TextDecoder().decode(dec(c)));
+  assert.equal(claims.aud, "https://web.push.apple.com"); assert.ok(claims.exp > Date.now() / 1000); assert.match(claims.sub, /^mailto:/);
+  const pub = await crypto.subtle.importKey("raw", dec(key1), { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+  assert.ok(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, pub, dec(sg), new TextEncoder().encode(`${h}.${c}`)), "tanda tangan VAPID valid");
+  assert.equal(JSON.parse(kv.get("push:zahra")).length, 1, "langganan mati dihapus");
+  // preferensi: reaksi dimatikan, tidak ada push
+  const p1 = pushCalls.length;
+  await call("POST", "/api/feed/react", { id: r.data.item.id, reaction: "like" }, T.zahra); // reaksi ke postingan Aqil: Aqil tidak punya HP
+  const zpost = (await call("POST", "/api/feed/post", { text: "postingan zahra" }, T.zahra)).data.item.id;
+  await call("POST", "/api/feed/react", { id: zpost, reaction: "love" }, T.aqil);
+  assert.equal(pushCalls.length - p1, 0, "reaksi dimatikan di HP Zahra");
+  await call("POST", "/api/feed/comment", { id: zpost, text: "mantap" }, T.aqil);
+  assert.equal(pushCalls.length - p1, 1, "komentar tetap dikirim");
+  // keputusan EP -> notifikasi tim, bukan Ray
+  // (EP tidak dikonfigurasi di tes ini; cek lewat notifikasi request baru)
+  // request baru di sheet -> Ray dapat notifikasi sekali
+  kv.delete("req:notified");
+  kv.delete("cache");
+  await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p }); // pertama: hanya mencatat
+  await new Promise((res) => setTimeout(res, 50));
+  assert.ok(kv.get("req:notified"));
+  const n0 = ((await call("GET", "/api/notif")).data.items || []).filter((n) => n.type === "request").length;
+  write(`${REQ}!A30:I30`, [[29, "25 November 2026", "ARIL SULAEMAN", "Banner Shopee 12.12 ukuran story", "26 November 2026", null, null, null, null]]);
+  kv.delete("cache"); await new Promise((res) => setTimeout(res, 5));
+  await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
+  await new Promise((res) => setTimeout(res, 50));
+  let rn = ((await call("GET", "/api/notif")).data.items || []).filter((n) => n.type === "request");
+  assert.equal(rn.length - n0, 1, "satu notifikasi request baru");
+  assert.equal(rn[0].requester, "ARIL SULAEMAN"); assert.match(rn[0].text, /Banner Shopee/);
+  assert.equal(((await call("GET", "/api/notif", null, T.zahra)).data.items || []).filter((n) => n.type === "request").length, 0, "hanya Ray");
+  kv.delete("cache");
+  await worker.scheduled({ scheduledTime: WORK_TIME + 600000 }, env, { waitUntil: (p) => p });
+  await new Promise((res) => setTimeout(res, 50));
+  rn = ((await call("GET", "/api/notif")).data.items || []).filter((n) => n.type === "request");
+  assert.equal(rn.length - n0, 1, "tidak dikirim ulang");
+  // berhenti langganan
+  assert.equal((await call("POST", "/api/push/unsubscribe", { endpoint: "https://fcm.googleapis.com/fcm/send/zahra1" }, T.zahra)).status, 200);
+  assert.equal(JSON.parse(kv.get("push:zahra")).length, 0);
+}
 
 console.log("SEMUA TES LULUS. Panggilan Lark tiruan:", calls.length);

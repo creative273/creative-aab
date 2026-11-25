@@ -2297,6 +2297,8 @@ const notifVerb = (n) => {
   if (n.type === "comment") return "mengomentari postinganmu";
   if (n.type === "reply") return `juga mengomentari ${owner}`;
   if (n.type === "update") return `minta kamu update aplikasi ke v${n.version}`;
+  if (n.type === "request") return `Request baru dari ${n.requester || "user"}`;
+  if (n.type === "ep") return n.status === "OKE" ? `meng-OKE EP “${n.text}”` : `minta revisi EP “${n.text}”`;
   if (n.type === "react") return `memberi ${(REACTS.find((r) => r[0] === n.reaction) || [, "👍"])[1]} pada postinganmu`;
   return "berinteraksi denganmu";
 };
@@ -2321,7 +2323,7 @@ async function loadNotif({ announce = false } = {}) {
     }
     // Saat aplikasi baru dibuka, permintaan update yang belum dibaca tetap muncul sebagai pop-up (sekali).
     const firstLoad = !wasLoaded && !ui.updPopped;
-    const pop = firstLoad ? r.items.filter((n) => n.type === "update" && !n.read).slice(0, 1) : fresh.filter((n) => !n.read);
+    const pop = firstLoad ? r.items.filter((n) => n.type === "update" && !n.read).slice(0, 1) : fresh.filter((n) => !n.read && n.type !== "ep" && n.type !== "request");
     if (firstLoad && pop.length) ui.updPopped = true;
     if ((announce || firstLoad) && pop.length) {
       const n = pop[0];
@@ -2357,7 +2359,7 @@ function renderBellPanel() {
   const items = (ui.notif && ui.notif.items) || [];
   p.innerHTML = `<div class="bell-head"><b>Notifikasi</b>${items.some((n) => !n.read) ? `<button class="linklike" data-bell="readall">Tandai semua dibaca</button>` : ""}</div>
     ${!ui.notif ? `<p class="empty">Memuat…</p>` : items.length ? `<ul class="bell-list">${items.map((n) => `<li><button class="bell-item${n.read ? "" : " unread"}" data-notif="${esc(n.id)}" data-post="${esc(n.postId || "")}">
-      ${avatar(n.by, "")}<span class="bell-body"><span class="bell-text"><b>${esc(profileOf(n.by).name)}</b> ${esc(notifVerb(n))}${n.text && n.type !== "update" ? `: “${esc(plainMentions(n.text))}”` : ""}</span><small>${esc(ago(n.at))}</small></span></button></li>`).join("")}</ul>`
+      ${avatar(n.by || "", "", n.requester || "")}<span class="bell-body"><span class="bell-text">${n.type === "request" ? "" : `<b>${esc(profileOf(n.by).name)}</b> `}${esc(notifVerb(n))}${n.text && !["update", "ep"].includes(n.type) ? `: “${esc(plainMentions(n.text))}”` : ""}${n.type === "ep" && n.note ? `: ${esc(n.note)}` : ""}</span><small>${esc(ago(n.at))}</small></span></button></li>`).join("")}</ul>`
       : `<p class="empty">Belum ada notifikasi. Kalau ada yang menandai, mengomentari, atau memberi reaksi, muncul di sini.</p>`}`;
   const r = $("btnBell").getBoundingClientRect();
   p.style.top = `${Math.round(r.bottom + 8)}px`;
@@ -2376,6 +2378,8 @@ async function openNotif(id, postId) {
   ui.bellOpen = false; renderBellPanel();
   const n = ui.notif && ui.notif.items.find((x) => x.id === id);
   if (n && !n.read) { n.read = true; ui.notif.unread = Math.max(0, ui.notif.unread - 1); renderBell(); api("/api/notif/read", { id }).catch(() => {}); }
+  if (n && n.type === "ep" && n.epId) { if (isFull()) goPage("ep"); else { ui.tab = "ep"; } ui.epOpen = n.epId; ui.view = "detail"; ui.form = {}; render(); return; }
+  if (n && n.type === "request") { if (isFull()) goPage("request"); else ui.tab = "request"; const rq = ((ui.data && ui.data.requests) || []).find((x) => x.id === n.reqId); ui.openId = rq ? rq.id : null; ui.view = rq ? "detail" : "list"; ui.form = {}; render(); return; }
   if (n && n.type === "update") { if (isFull()) goPage("settings"); else { ui.view = "settings"; ui.form = {}; render(); } return; }
   if (postId) openPost(postId);
 }
