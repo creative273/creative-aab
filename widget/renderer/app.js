@@ -87,6 +87,7 @@ function limitError() {
 async function logout(msg) {
   ui.settings = await window.aab.saveSettings({ token: "", user: null });
   ui.data = null; ui.dash = null; ui.ep = null; ui.cal = null; ui.gcfg = null; ui.gErr = ""; ui.tab = "request"; ui.view = "list"; ui.filter = null;
+  ui.notif = null; ui.feeds = {}; ui.bellOpen = false; renderBellPanel(); closeMention();
   ui.form = msg ? { msg, msgType: "info" } : {};
   render();
 }
@@ -105,6 +106,8 @@ async function loadState({ refresh = false } = {}) {
     await applyGoogle(data);
     await syncPhotos();
     await checkNewRequests(data.requests || []);
+    if (!ui.notif) loadNotif();
+    else if ((data.notifUnread || 0) !== ui.notif.unread) loadNotif({ announce: true });
     // Timeline terbuka dan ada kabar baru: muat ulang diam-diam.
     const fa = (ui.feeds || {}).all;
     if (currentPage() === "feed" && fa && !fa.loading && data.feedLatest && (!fa.items[0] || data.feedLatest > fa.items[0].at)) loadFeed();
@@ -141,7 +144,7 @@ async function checkNewRequests(requests, { silent = false } = {}) {
 // ---------- Render ----------
 function render() {
   applyTheme();
-  if (!isFull() && ["home", "ig", "feed", "team", "profile"].includes(ui.tab)) ui.tab = "request";
+  if (!isFull() && ["home", "ig", "feed", "team", "profile", "post"].includes(ui.tab)) ui.tab = "request";
   renderBar();
   renderSide();
   renderPageHead();
@@ -162,6 +165,10 @@ function render() {
   } else if (ui.tab === "feed" && isFull()) {
     view.innerHTML = (ui.feedErr ? `<p class="msg err">${esc(ui.feedErr)}</p>` : "") + feedView();
     bindFeed();
+  } else if (ui.tab === "post" && isFull()) {
+    view.innerHTML = (ui.feedErr ? `<p class="msg err">${esc(ui.feedErr)}</p>` : "") + postView();
+    bindFeedCommon();
+    view.querySelectorAll("[data-nav-go]").forEach((b) => b.addEventListener("click", () => goPage(b.dataset.navGo)));
   } else if (ui.tab === "team" && isFull()) {
     view.innerHTML = teamView();
     bindTeam();
@@ -220,6 +227,7 @@ function renderBar() {
   document.querySelector(".tabs").hidden = !configured();
   // Tombol muat ulang hanya untuk Ray. Tim mendapat data baru otomatis tiap 5 menit.
   $("btnRefresh").hidden = !isLead();
+  renderBell();
   $("btnPin").classList.toggle("on", !!ui.settings.pinned);
   $("btnPin").setAttribute("aria-pressed", String(!!ui.settings.pinned));
   const c = (ui.data && ui.data.counts) || {};
@@ -1362,7 +1370,7 @@ function applyTheme() {
 
 async function setMode(mode) {
   ui.settings = await window.aab.setMode(mode);
-  if (mode === "compact" && ["home", "ig", "feed", "team", "profile"].includes(ui.tab)) ui.tab = "request";
+  if (mode === "compact" && ["home", "ig", "feed", "team", "profile", "post"].includes(ui.tab)) ui.tab = "request";
   if (mode === "full" && configured() && ui.tab === "request" && ui.view === "list") ui.tab = "home";
   if (ui.view === "detail" && ui.tab !== "ep") ui.view = "list";
   render();
@@ -1458,7 +1466,7 @@ function renderSide() {
   side.hidden = !show;
   if (!show) return;
   const u = ui.settings.user || {};
-  const cur = currentPage() === "profile" ? "team" : currentPage();
+  const cur = currentPage() === "profile" ? "team" : currentPage() === "post" ? "feed" : currentPage();
   const role = isLead() ? "Creative Lead" : `Tim creative, blok ${(member() || {}).block || ""}`;
   const t = ui.data && ui.data.fetchedAt ? new Date(ui.data.fetchedAt) : null;
   side.innerHTML = `
@@ -1517,6 +1525,7 @@ function renderPageHead() {
     feed: ["Timeline", "Kabar dan aktivitas tim creative"],
     team: ["Profil tim", "Kenalan lebih dekat dengan tim creative"],
     profile: ["Profil", "Foto, bio, dan aktivitas"],
+    post: ["Postingan", "Dari Timeline tim creative"],
     settings: ["Pengaturan", "Tampilan berlaku di laptop ini. Foto profil terlihat oleh seluruh tim."],
   };
   const [h, p] = heads[currentPage()] || heads.home;
@@ -1967,6 +1976,8 @@ async function loadFeed({ more = false, by = "" } = {}) {
 
 // Ganti satu item di semua daftar yang sedang dimuat.
 function feedReplace(item, removedId) {
+  if (ui.postItem && removedId && ui.postItem.id === removedId) { ui.postItem = null; ui.postErr = "Postingan ini sudah dihapus."; }
+  else if (ui.postItem && item && ui.postItem.id === item.id) ui.postItem = item;
   for (const f of Object.values(ui.feeds || {})) {
     if (removedId) f.items = f.items.filter((x) => x.id !== removedId);
     else f.items = f.items.map((x) => (x.id === item.id ? item : x));
@@ -2027,7 +2038,13 @@ async function coverImage(file) {
 }
 
 function linkify(text) {
-  return esc(text).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u.length > 60 ? u.slice(0, 57) + "…" : u}</a>`);
+  return esc(text)
+    .replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u.length > 60 ? u.slice(0, 57) + "…" : u}</a>`)
+    .replace(/(^|[\s(])@([a-z0-9._-]{3,32})/gi, (all, pre, raw) => {
+      const u = raw.toLowerCase().replace(/[._-]+$/, "");
+      const tail = raw.slice(u.length);
+      return teamBy("username", u) ? `${pre}<button class="mention" data-prof="${u}">@${esc(profileOf(u).short)}</button>${tail}` : all;
+    });
 }
 
 function postCard(p) {
@@ -2059,7 +2076,7 @@ function postCard(p) {
     ${p.comments.length > 3 && !showAll ? `<button class="linklike more-cm" data-allcm="${p.id}">Lihat ${p.comments.length - 3} komentar sebelumnya</button>` : ""}
     ${comments.length ? `<ul class="comments">${comments.map((c) => `<li>${avatarLink(c.by, "sm")}<div class="cm-bubble">${nameLink(c.by)}<p>${linkify(c.text)}</p></div>
       <small>${esc(ago(c.at))}${c.by === me || isLead() ? ` · <button class="linklike" data-cdel="${c.id}" data-pid="${p.id}">Hapus</button>` : ""}</small></li>`).join("")}</ul>` : ""}
-    <div class="cm-new">${avatar(me, "sm")}<input type="text" data-cm="${p.id}" maxlength="500" placeholder="Tulis komentar…" aria-label="Tulis komentar" value="${esc((ui.form.cm || {})[p.id] || "")}"><button class="btn inline" data-cmsend="${p.id}">Kirim</button></div>
+    <div class="cm-new">${avatar(me, "sm")}<input type="text" data-cm="${p.id}" maxlength="500" placeholder="Tulis komentar… (@ untuk menandai)" aria-label="Tulis komentar" value="${esc((ui.form.cm || {})[p.id] || "")}"><button class="btn inline" data-cmsend="${p.id}">Kirim</button></div>
   </article>`;
 }
 
@@ -2076,7 +2093,7 @@ function composer() {
   const f = ui.form;
   const first = profileOf(me).short;
   return `<section class="composer glass">
-    <div class="comp-row">${avatar(me)}<textarea id="postText" rows="${f.postText ? 3 : 2}" maxlength="2000" placeholder="Apa yang lagi dikerjakan, ${esc(first)}?" aria-label="Tulis postingan">${esc(f.postText || "")}</textarea></div>
+    <div class="comp-row">${avatar(me)}<textarea id="postText" rows="${f.postText ? 3 : 2}" maxlength="2000" placeholder="Apa yang lagi dikerjakan, ${esc(first)}? Ketik @ untuk menandai teman." aria-label="Tulis postingan">${esc(f.postText || "")}</textarea></div>
     ${f.postImg ? `<div class="comp-preview"><img src="${f.postImg.url}" alt="Pratinjau foto"><button class="icon-btn sm" data-act="dropImg" aria-label="Hapus foto">×</button></div>` : ""}
     <div class="comp-actions">
       <label class="btn secondary inline comp-photo"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${AUTO_ICON.design}</svg>Foto<input type="file" id="postFile" accept="image/png,image/jpeg,image/webp" hidden></label>
@@ -2156,7 +2173,9 @@ function bindFeedCommon() {
   const et = $("editText");
   if (et) { et.addEventListener("input", () => { ui.form.editText = et.value; }); et.focus(); }
   document.querySelectorAll("[data-psave]").forEach((b) => b.addEventListener("click", () => { const text = ui.form.editText ?? $("editText").value; ui.form.editPost = ""; run(() => api("/api/feed/edit", { id: b.dataset.psave, text })); }));
+  if (et) attachMention(et, (v) => { ui.form.editText = v; });
   document.querySelectorAll("[data-cm]").forEach((inp) => {
+    attachMention(inp, (v) => { (ui.form.cm ||= {})[inp.dataset.cm] = v; });
     inp.addEventListener("input", () => { (ui.form.cm ||= {})[inp.dataset.cm] = inp.value; });
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sendComment(inp.dataset.cm); } });
   });
@@ -2199,7 +2218,7 @@ function showZoom(src) {
 function bindFeed() {
   bindFeedCommon();
   const t = $("postText");
-  if (t) t.addEventListener("input", () => { ui.form.postText = t.value; if (t.rows < 3 && t.value) t.rows = 3; });
+  if (t) { attachMention(t, (v) => { ui.form.postText = v; }); t.addEventListener("input", () => { ui.form.postText = t.value; if (t.rows < 3 && t.value) t.rows = 3; }); }
   const file = $("postFile");
   if (file) file.addEventListener("change", async () => {
     const f0 = file.files && file.files[0];
@@ -2268,6 +2287,149 @@ function bindProfile() {
 function openProfile(username) {
   ui.profileUser = username;
   goPage("profile");
+}
+
+// ===================== v1.5.1: Tag dan notifikasi =====================
+const NOTIF_POLL_MS = 60 * 1000;
+const notifVerb = (n) => {
+  const owner = n.postBy && n.postBy !== ui.settings.user.username ? `postingan ${profileOf(n.postBy).short}` : "postinganmu";
+  if (n.type === "mention") return n.postBy && n.postBy !== n.by ? `menandai kamu di komentar ${owner === "postinganmu" ? "postinganmu" : owner}` : "menandai kamu di postingan";
+  if (n.type === "comment") return "mengomentari postinganmu";
+  if (n.type === "reply") return `juga mengomentari ${owner}`;
+  if (n.type === "react") return `memberi ${(REACTS.find((r) => r[0] === n.reaction) || [, "👍"])[1]} pada postinganmu`;
+  return "berinteraksi denganmu";
+};
+
+// @username jadi @Nama untuk teks biasa (notifikasi, pop-up).
+const plainMentions = (t) => String(t || "").replace(/@([a-z0-9._-]{3,32})/gi, (all, raw) => { const u = raw.toLowerCase().replace(/[._-]+$/, ""); return teamBy("username", u) ? `@${profileOf(u).short}${raw.slice(u.length)}` : all; });
+
+async function loadNotif({ announce = false } = {}) {
+  if (!configured() || !ui.settings.user) return;
+  try {
+    const r = await api("/api/notif");
+    const prevIds = new Set((ui.notif && ui.notif.items || []).map((n) => n.id));
+    const fresh = ui.notif ? r.items.filter((n) => !n.read && !prevIds.has(n.id)) : [];
+    ui.notif = r;
+    if (ui.data) ui.data.notifUnread = r.unread;
+    if (announce && fresh.length) {
+      const n = fresh[0];
+      window.aab.showPopup(fresh.length === 1
+        ? { id: `post:${n.postId}:${n.id}`, title: `${profileOf(n.by).short} ${notifVerb(n)}`, body: plainMentions(n.text || "") }
+        : { id: `post:${n.postId}:${n.id}`, title: `${fresh.length} notifikasi baru`, body: fresh.map((x) => `${profileOf(x.by).short} ${notifVerb(x)}`).join("\n") });
+    }
+    renderBell();
+    if (ui.bellOpen) renderBellPanel();
+  } catch { /* coba lagi di putaran berikutnya */ }
+}
+
+function renderBell() {
+  const b = $("btnBell");
+  if (!b) return;
+  b.hidden = !configured();
+  const n = (ui.notif && ui.notif.unread) ?? (ui.data && ui.data.notifUnread) ?? 0;
+  const badge = $("bellCount");
+  badge.textContent = n > 9 ? "9+" : n ? String(n) : "";
+  badge.hidden = !n;
+  b.setAttribute("aria-label", n ? `Notifikasi, ${n} belum dibaca` : "Notifikasi");
+}
+
+function renderBellPanel() {
+  let p = $("bellPanel");
+  if (!ui.bellOpen) { if (p) p.remove(); return; }
+  if (!p) { p = document.createElement("div"); p.id = "bellPanel"; p.className = "bell-panel glass"; p.setAttribute("role", "dialog"); p.setAttribute("aria-label", "Notifikasi"); document.body.appendChild(p); }
+  const items = (ui.notif && ui.notif.items) || [];
+  p.innerHTML = `<div class="bell-head"><b>Notifikasi</b>${items.some((n) => !n.read) ? `<button class="linklike" data-bell="readall">Tandai semua dibaca</button>` : ""}</div>
+    ${!ui.notif ? `<p class="empty">Memuat…</p>` : items.length ? `<ul class="bell-list">${items.map((n) => `<li><button class="bell-item${n.read ? "" : " unread"}" data-notif="${esc(n.id)}" data-post="${esc(n.postId || "")}">
+      ${avatar(n.by, "")}<span class="bell-body"><span class="bell-text"><b>${esc(profileOf(n.by).name)}</b> ${esc(notifVerb(n))}${n.text ? `: “${esc(plainMentions(n.text))}”` : ""}</span><small>${esc(ago(n.at))}</small></span></button></li>`).join("")}</ul>`
+      : `<p class="empty">Belum ada notifikasi. Kalau ada yang menandai, mengomentari, atau memberi reaksi, muncul di sini.</p>`}`;
+  const r = $("btnBell").getBoundingClientRect();
+  p.style.top = `${Math.round(r.bottom + 8)}px`;
+  p.style.right = `${Math.max(8, Math.round(window.innerWidth - r.right))}px`;
+  p.querySelector('[data-bell="readall"]')?.addEventListener("click", async () => { try { const x = await api("/api/notif/read", {}); ui.notif.items.forEach((n) => { n.read = true; }); ui.notif.unread = x.unread; } catch { /* abaikan */ } renderBell(); renderBellPanel(); });
+  p.querySelectorAll("[data-notif]").forEach((b) => b.addEventListener("click", () => openNotif(b.dataset.notif, b.dataset.post)));
+}
+
+function toggleBell(open = !ui.bellOpen) {
+  ui.bellOpen = open;
+  renderBellPanel();
+  if (open) loadNotif();
+}
+
+async function openNotif(id, postId) {
+  ui.bellOpen = false; renderBellPanel();
+  const n = ui.notif && ui.notif.items.find((x) => x.id === id);
+  if (n && !n.read) { n.read = true; ui.notif.unread = Math.max(0, ui.notif.unread - 1); renderBell(); api("/api/notif/read", { id }).catch(() => {}); }
+  if (postId) openPost(postId);
+}
+
+async function openPost(postId) {
+  if (!isFull()) await setMode("full");
+  ui.postId = postId; ui.postItem = null; ui.postErr = "";
+  goPage("post");
+  try { ui.postItem = (await api(`/api/feed/item?id=${encodeURIComponent(postId)}`)).item; (ui.openComments ||= {})[postId] = true; }
+  catch (e) { ui.postErr = e.message; }
+  if (currentPage() === "post") render();
+}
+
+function postView() {
+  if (ui.postErr) return `<div class="feed-wrap"><p class="msg err">${esc(ui.postErr)}</p><button class="btn secondary inline" data-nav-go="feed">Buka Timeline</button></div>`;
+  if (!ui.postItem) return `<p class="empty">Memuat postingan…</p>`;
+  return `<div class="feed-wrap"><button class="linklike back-feed" data-nav-go="feed">← Kembali ke Timeline</button><div class="feed">${postCard(ui.postItem)}</div></div>`;
+}
+
+// Tag: ketik @ di postingan atau komentar, pilih orang dari daftar. Yang tersimpan @username.
+function mentionMatch(el) {
+  const v = el.value.slice(0, el.selectionStart ?? el.value.length);
+  const m = v.match(/(^|\s)@([a-z0-9._-]{0,20})$/i);
+  return m ? { q: m[2].toLowerCase(), start: v.length - m[2].length - 1 } : null;
+}
+function mentionCandidates(q) {
+  const me = ui.settings.user.username;
+  return ((ui.data && ui.data.team) || []).filter((t) => t.username !== me)
+    .map((t) => ({ u: t.username, p: profileOf(t.username) }))
+    .filter(({ u, p }) => !q || u.startsWith(q) || p.short.toLowerCase().startsWith(q) || p.name.toLowerCase().split(" ").some((w) => w.startsWith(q)))
+    .slice(0, 6);
+}
+function closeMention() { const b = $("mentionBox"); if (b) b.remove(); ui.mention = null; }
+function attachMention(el, onChange) {
+  if (!el || el.dataset.mention) return;
+  el.dataset.mention = "1";
+  const show = () => {
+    const m = mentionMatch(el);
+    const list = m ? mentionCandidates(m.q) : [];
+    if (!m || !list.length) return closeMention();
+    ui.mention = { el, m, list, i: ui.mention && ui.mention.el === el ? Math.min(ui.mention.i, list.length - 1) : 0 };
+    let box = $("mentionBox");
+    if (!box) { box = document.createElement("div"); box.id = "mentionBox"; box.className = "mention-box glass"; box.setAttribute("role", "listbox"); document.body.appendChild(box); }
+    box.innerHTML = list.map(({ u, p }, i) => `<button role="option" aria-selected="${i === ui.mention.i}" data-mu="${esc(u)}">${avatar(u, "sm")}<span><b>${esc(p.name)}</b><small>@${esc(u)} · ${esc(p.title)}</small></span></button>`).join("");
+    const r = el.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom > 230;
+    box.style.left = `${Math.round(r.left)}px`;
+    box.style.width = `${Math.round(Math.min(320, Math.max(240, r.width)))}px`;
+    box.style.top = below ? `${Math.round(r.bottom + 4)}px` : "";
+    box.style.bottom = below ? "" : `${Math.round(window.innerHeight - r.top + 4)}px`;
+    box.querySelectorAll("[data-mu]").forEach((b) => b.addEventListener("mousedown", (e) => { e.preventDefault(); pick(b.dataset.mu); }));
+  };
+  const pick = (u) => {
+    const m = mentionMatch(el);
+    if (!m) return closeMention();
+    const pos = el.selectionStart ?? el.value.length;
+    el.value = `${el.value.slice(0, m.start)}@${u} ${el.value.slice(pos)}`;
+    const caret = m.start + u.length + 2;
+    el.setSelectionRange(caret, caret);
+    onChange(el.value);
+    closeMention();
+    el.focus();
+  };
+  el.addEventListener("input", show);
+  el.addEventListener("click", show);
+  el.addEventListener("blur", () => setTimeout(() => { if (ui.mention && ui.mention.el === el) closeMention(); }, 120));
+  el.addEventListener("keydown", (e) => {
+    if (!ui.mention || ui.mention.el !== el) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); ui.mention.i = (ui.mention.i + (e.key === "ArrowDown" ? 1 : -1) + ui.mention.list.length) % ui.mention.list.length; show(); }
+    else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); e.stopImmediatePropagation(); pick(ui.mention.list[ui.mention.i].u); }
+    else if (e.key === "Escape") { e.stopImmediatePropagation(); closeMention(); }
+  });
 }
 
 // ---------- Login ----------
@@ -2651,7 +2813,11 @@ async function init() {
   $("btnRefresh").addEventListener("click", () => loadState({ refresh: true }));
   $("btnHide").addEventListener("click", () => window.aab.hide());
   $("btnPin").addEventListener("click", async () => { ui.settings = await window.aab.saveSettings({ pinned: !ui.settings.pinned }); renderBar(); });
+  $("btnBell").addEventListener("click", (e) => { e.stopPropagation(); toggleBell(); });
+  document.addEventListener("click", (e) => { if (ui.bellOpen && !e.target.closest("#bellPanel, #btnBell")) toggleBell(false); });
+  window.addEventListener("resize", () => { if (ui.bellOpen) renderBellPanel(); closeMention(); });
   window.aab.onOpenRequest((id) => {
+    if (String(id || "").startsWith("post:")) { const [, postId, nid] = String(id).split(":"); openNotif(nid, postId); return; }
     if (String(id || "").startsWith("ep:")) { ui.tab = "ep"; ui.epOpen = id.slice(3); ui.view = "detail"; ui.form = {}; render(); return; }
     ui.tab = "request";
     ui.openId = id;
@@ -2660,11 +2826,14 @@ async function init() {
     render();
   });
   document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && ui.bellOpen) { toggleBell(false); $("btnBell").focus(); return; }
     if (e.key === "Escape" && ui.view !== "list" && configured()) { ui.view = "list"; ui.form = {}; render(); }
   });
   render();
   await loadState();
   setInterval(() => loadState(), POLL_MS);
+  loadNotif();
+  setInterval(() => loadNotif({ announce: true }), NOTIF_POLL_MS);
   window.addEventListener("focus", () => { if (!ui.loading && Date.now() - (ui.lastLoad || 0) > FOCUS_MIN_MS) loadState(); });
 }
 

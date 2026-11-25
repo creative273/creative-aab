@@ -61,6 +61,9 @@ export default {
         "POST /api/feed/comment": ["all", () => feedComment(env, me, body)],
         "POST /api/feed/react": ["all", () => feedReact(env, me, body)],
         "POST /api/feed/delete": ["all", () => feedDelete(env, me, body)],
+        "GET /api/feed/item": ["all", () => feedOne(env, me, url)],
+        "GET /api/notif": ["all", () => getNotif(env, me)],
+        "POST /api/notif/read": ["all", () => readNotif(env, me, body)],
         "POST /api/password": ["all", () => changeOwnPassword(env, me, body)],
         "POST /api/request/done": ["all", () => requestDone(env, body, me)],
         "POST /api/kpi/content/preview": ["content", () => contentPreview(env, body)],
@@ -403,6 +406,8 @@ async function feedPost(env, me, body) {
     item.image = { ver: Date.now(), w: clampInt(body.w, 1, 4000), h: clampInt(body.h, 1, 4000) };
   }
   await feedInsert(env, item);
+  const accounts = await getAccounts(env);
+  await notifyMany(env, mentionsIn(text, accounts).map((u) => [u, { type: "mention", by: me.username, postId: item.id, text: snippet(text) }]));
   return { ok: true, item: feedPublic(item, me) };
 }
 
@@ -420,8 +425,17 @@ async function feedComment(env, me, body) {
   const item = await feedLoad(env, clean(body.id));
   item.comments = item.comments || [];
   if (item.comments.length >= 200) throw fail("Komentar di postingan ini sudah terlalu banyak.");
+  const before = item.comments.map((c) => c.by);
   item.comments.push({ id: feedId(), at: new Date().toISOString(), by: me.username, text });
   await env.STORE.put(`feed:item:${item.id}`, JSON.stringify(item));
+  // Urutan prioritas: yang ditag, pemilik postingan, lalu yang sudah ikut berkomentar.
+  const accounts = await getAccounts(env);
+  const base = { by: me.username, postId: item.id, postBy: item.by, text: snippet(text) };
+  await notifyMany(env, [
+    ...mentionsIn(text, accounts).map((u) => [u, { ...base, type: "mention" }]),
+    [item.by, { ...base, type: "comment" }],
+    ...before.map((u) => [u, { ...base, type: "reply" }]),
+  ]);
   return { ok: true, item: feedPublic(item, me) };
 }
 
@@ -430,9 +444,11 @@ async function feedReact(env, me, body) {
   const r = clean(body.reaction);
   if (r && !REACTIONS.includes(r)) throw fail("Reaksi tidak dikenal.");
   item.reactions = item.reactions || {};
-  if (!r || item.reactions[me.username] === r) delete item.reactions[me.username];
+  const had = item.reactions[me.username];
+  if (!r || had === r) delete item.reactions[me.username];
   else item.reactions[me.username] = r;
   await env.STORE.put(`feed:item:${item.id}`, JSON.stringify(item));
+  if (r && !had && item.reactions[me.username]) await notifyMany(env, [[item.by, { type: "react", reaction: r, by: me.username, postId: item.id, text: snippet(item.text) }]]);
   return { ok: true, item: feedPublic(item, me) };
 }
 
@@ -462,9 +478,12 @@ async function feedEdit(env, me, body) {
   if (item.kind !== "post" || item.by !== me.username) throw fail("Hanya pemilik postingan yang bisa mengubah.", 403);
   const text = multiline(body.text, FEED_TEXT_MAX);
   if (!text && !item.image) throw fail("Postingan tidak boleh kosong.");
+  const accounts = await getAccounts(env);
+  const old = new Set(mentionsIn(item.text, accounts));
   item.text = text;
   item.editedAt = new Date().toISOString();
   await env.STORE.put(`feed:item:${item.id}`, JSON.stringify(item));
+  await notifyMany(env, mentionsIn(text, accounts).filter((u) => !old.has(u)).map((u) => [u, { type: "mention", by: me.username, postId: item.id, text: snippet(text) }]));
   return { ok: true, item: feedPublic(item, me) };
 }
 
@@ -514,6 +533,59 @@ async function requestLabel(env, row) {
   const r = cache && (cache.requests || []).find((x) => x.row === row);
   return r ? ` "${r.info.slice(0, 70)}"${r.user ? ` dari ${r.user}` : ""}` : ` baris ${row}`;
 }
+
+// ---------- Notifikasi dan tag (v1.5.1) ----------
+// Tag ditulis sebagai @username (dipilih dari daftar saat mengetik @). Notifikasi disimpan per akun di notif:<username>.
+const NOTIF_KEEP = 60;
+
+function mentionsIn(text, accounts) {
+  const out = new Set();
+  for (const m of String(text || "").matchAll(/@([a-z0-9._-]{3,32})/gi)) {
+    const u = m[1].toLowerCase().replace(/[._-]+$/, "");
+    if (accounts[u] && accounts[u].active !== false) out.add(u);
+  }
+  return [...out];
+}
+
+async function notify(env, to, n) {
+  if (!to || to === n.by) return;
+  const key = `notif:${to}`;
+  const list = (await env.STORE.get(key, "json")) || [];
+  list.unshift({ id: feedId(), at: new Date().toISOString(), read: false, ...n });
+  await env.STORE.put(key, JSON.stringify(list.slice(0, NOTIF_KEEP)));
+}
+
+// Kirim ke banyak orang, masing-masing paling banyak satu notifikasi per kejadian.
+async function notifyMany(env, list) {
+  const seen = new Set();
+  for (const [to, n] of list) {
+    if (!to || to === n.by || seen.has(to)) continue;
+    seen.add(to);
+    await notify(env, to, n).catch(() => {});
+  }
+}
+
+async function getNotif(env, me) {
+  const list = (await env.STORE.get(`notif:${me.username}`, "json")) || [];
+  return { ok: true, items: list, unread: list.filter((n) => !n.read).length };
+}
+
+async function readNotif(env, me, body) {
+  const key = `notif:${me.username}`;
+  const list = (await env.STORE.get(key, "json")) || [];
+  const id = clean(body.id);
+  let changed = false;
+  for (const n of list) if (!n.read && (!id || n.id === id)) { n.read = true; changed = true; }
+  if (changed) await env.STORE.put(key, JSON.stringify(list));
+  return { ok: true, unread: list.filter((n) => !n.read).length };
+}
+
+async function feedOne(env, me, url) {
+  const item = await feedLoad(env, url.searchParams.get("id") || "");
+  return { ok: true, item: feedPublic(item, me) };
+}
+
+const snippet = (t) => String(t || "").replace(/\s+/g, " ").slice(0, 90);
 
 // ---------- Aktivitas dan dashboard Ray ----------
 
@@ -1182,6 +1254,7 @@ async function fullState(env, me, base) {
   const accounts = await getAccounts(env);
   out.team = Object.values(accounts).filter((a) => a.active !== false).map(teamEntry);
   out.feedLatest = (await feedIndex(env))[0]?.at || null;
+  out.notifUnread = ((await env.STORE.get(`notif:${me.username}`, "json")) || []).filter((n) => !n.read).length;
   const g = await getGoogleConfig(env);
   if (g.ep) out.ep = await getEp(env, me).catch((e) => ({ ok: false, error: e.message }));
   if (g.calendar && allowed(me, "content")) out.cal = await getCalendar(env).catch((e) => ({ ok: false, error: e.message }));

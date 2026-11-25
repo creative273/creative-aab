@@ -577,3 +577,28 @@ html.full .icon-btn.sm, .icon-btn.sm { width: 24px; height: 24px; font-size: 16p
 .prof-edit .btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .prof-edit .btns label { cursor: pointer; }
 .post .btns { display: flex; gap: 8px; }
+
+/* v1.5.1: notifikasi dan tag */
+.icon-btn.bell { position: relative; }
+.bell-count { position: absolute; top: -3px; right: -3px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px; background: #E5484D; color: #fff; font-size: 10.5px; font-weight: 700; line-height: 17px; text-align: center; box-shadow: 0 0 0 2px rgb(var(--bg-c)); }
+.bell-panel { position: fixed; z-index: 60; width: 380px; max-height: min(560px, 75vh); display: flex; flex-direction: column; padding: 10px; background: rgb(var(--panel-c) / .97); }
+.bell-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 8px; }
+.bell-head .linklike { font-size: 12.5px; color: var(--accent-2); text-decoration: none; }
+.bell-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.bell-item { display: flex; gap: 10px; align-items: flex-start; width: 100%; padding: 8px; border: 0; border-radius: 12px; background: none; color: var(--ink); text-align: left; cursor: pointer; font: inherit; }
+.bell-item:hover { background: var(--hover); }
+.bell-item.unread { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.bell-item.unread::after { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-top: 6px; }
+.bell-item .avatar { width: 36px; height: 36px; font-size: 14px; }
+.bell-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.bell-text { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.bell-item small { color: var(--ink-2); font-size: 11.5px; }
+.bell-panel .empty { padding: 18px 10px; font-size: 13px; }
+.mention-box { position: fixed; z-index: 70; padding: 6px; display: flex; flex-direction: column; gap: 2px; background: rgb(var(--panel-c) / .98); }
+.mention-box button { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-radius: 10px; background: none; color: var(--ink); text-align: left; cursor: pointer; font: inherit; }
+.mention-box button[aria-selected="true"], .mention-box button:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.mention-box span { display: flex; flex-direction: column; min-width: 0; }
+.mention-box small { color: var(--ink-2); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mention { border: 0; padding: 0 2px; margin: 0; border-radius: 4px; background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-2); font: inherit; font-weight: 600; cursor: pointer; }
+.mention:hover { text-decoration: underline; }
+.back-feed { align-self: flex-start; color: var(--ink-2); text-decoration: none; }
