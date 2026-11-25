@@ -74,6 +74,13 @@ Widget otomatis terbuka saat Windows menyala. Tombol − menyembunyikannya ke tr
 - **Pengaturan → Tampilan** (per laptop): warna aksen (7 pilihan atau warna bebas), transparansi kaca, mode terang, efek kaca Windows 11 (wallpaper terlihat buram di belakang jendela; di Windows 10 memakai latar gradasi), dan pilihan membuka sebagai jendela penuh saat Windows menyala. Pop-up ikut warna aksen.
 - **Foto profil:** Pengaturan → Ganti foto. Foto dipotong bulat, dikompres kecil, disimpan di server, dan terlihat oleh seluruh tim di sidebar, kartu KPI, dan aktivitas.
 
+## Timeline, profil tim, dan tema penuh (versi 1.5)
+
+- **Timeline** (semua akun, jendela penuh): tulis kabar dengan teks dan foto, beri reaksi (Suka, Love, Haha, Wow, Keren), dan komentar. Kejadian dari widget ikut muncul otomatis: konten baru di KPI, hasil design dan video, input AIGC, keputusan request, OKE atau revisi EP, dan POSTED. Postingan dan komentar bisa dihapus pemiliknya atau Ray. Menu Timeline menampilkan tanda **Baru** kalau ada kabar yang belum dibaca.
+- **Profil tim**: kartu semua anggota. Klik nama atau foto siapa saja (di Timeline juga) untuk membuka profilnya: foto besar, sampul, jabatan, bio, dan aktivitas orang itu. Di profil sendiri ada **Edit profil** untuk mengganti jabatan, bio, dan foto sampul.
+- **Warna latar dan kartu** (Pengaturan): geser ke kanan supaya sidebar, kartu, dan latar ikut warna aksen. Geser ke kiri untuk tampilan netral seperti versi 1.3.
+- Timeline menyimpan 300 item terakhir. Foto postingan dikompres otomatis.
+
 ## Akun dan akses
 
 | Akun | Akses |
@@ -122,7 +129,7 @@ Yang terjadi setelah terhubung:
 
 - Menu **Insight Instagram** (semua akun tim): followers, views, reach, dan interaksi 7 hari (dibanding 7 hari sebelumnya), grafik views per hari 14 hari, konten terbaik 7 atau 30 hari, dan tabel semua konten 60 hari terakhir. Ray punya tombol **Sinkron sekarang**.
 - Followers, daftar postingan, dan insight akun diambil tiap 3 jam. Angka per konten diperbarui bergiliran tiap 10 menit, konten seminggu terakhir didahulukan. Semua ini berjalan di jadwal server yang sama dengan sheet (Senin sampai Sabtu, 08.00 sampai 18.00 WIB). Instagram sendiri bisa terlambat sampai 48 jam.
-- **Angka di blok CONTENT terisi otomatis.** Tiap jam, Views, Likes, Comment, dan Share & Save untuk link yang sudah ada di blok CONTENT diperbarui dari Instagram. Share & Save diisi jumlah share ditambah save. Kalau Instagram tidak memberi angka views (misalnya sebagian carousel), kolom Views dibiarkan seperti semula, kolom lain tetap diperbarui.
+- **Angka di blok CONTENT terisi otomatis.** Tiap 4 jam (dan saat Ray klik Sinkron sekarang), Views, Likes, Comment, dan Share & Save untuk link yang sudah ada di blok CONTENT diperbarui dari Instagram. Share & Save diisi jumlah share ditambah save. Kalau Instagram tidak memberi angka views (misalnya sebagian carousel), kolom Views dibiarkan seperti semula, kolom lain tetap diperbarui.
 - **Zahra tidak perlu file ABT lagi untuk konten IG.** Di Input KPI klik **Ambil postingan baru**: muncul postingan bulan ini (sesuai sheet bulanan) yang belum ada di sheet, lengkap dengan tanggal, akun (COLLABORATION kalau postingan muncul di kedua akun), kategori, dan angka. Zahra tinggal isi nama konten dan pilih pillar, lalu kirim. Upload file ABT tetap ada sebagai cadangan.
 
 ## E. Rutinitas tiap awal bulan
@@ -136,7 +143,7 @@ Yang terjadi setelah terhubung:
 
 | Nama | Blok | Yang diisi |
 |---|---|---|
-| Fitria Azzahra Kurnia | CONTENT (A:K) | Mulai versi 1.4: klik **Ambil postingan baru** (dari Instagram), isi nama konten dan pillar. Angka konten lama diperbarui otomatis tiap jam. Cadangan: tarik file bulk ABT (.xlsx). Konten lama hanya diperbarui angkanya. Untuk konten baru, isi nama konten sendiri (caption ABT ditampilkan sebagai acuan) dan pilih pillar. Ada input manual untuk konten yang metriknya tidak terbaca ABT. |
+| Fitria Azzahra Kurnia | CONTENT (A:K) | Mulai versi 1.4: klik **Ambil postingan baru** (dari Instagram), isi nama konten dan pillar. Angka konten lama diperbarui otomatis tiap 4 jam. Cadangan: tarik file bulk ABT (.xlsx). Konten lama hanya diperbarui angkanya. Untuk konten baru, isi nama konten sendiri (caption ABT ditampilkan sebagai acuan) dan pilih pillar. Ada input manual untuk konten yang metriknya tidak terbaca ABT. |
 | Athallah Aqil Sukendar | DESIGN (N:Q) | Bisa banyak sekaligus. **Import dari Excel**: tanggal dan informasi detil terisi otomatis dari file Excel (format sama dengan blok DESIGN), baris yang sudah ada di sheet dilewati, lalu tinggal tambah gambar per baris. Bisa juga tarik beberapa SS sekaligus (mengisi baris yang belum punya gambar, urut dari atas) atau klik "+ Tambah inputan". Ada tombol untuk mengirim baris yang sudah ada gambarnya saja. |
 | Muhammad Albar | VIDEO (S:V) | Sama seperti DESIGN, termasuk Import dari Excel. Per input bisa tempel link video, lalu SS diambil otomatis, atau tarik SS manual. Link ditulis di kolom Informasi Detil karena blok VIDEO tidak punya kolom link. |
 | Rifqi Firega | AIGC (AH:AK) | Tanggal, jumlah produksi, jumlah upload. Tanggal yang sama dikirim ulang akan ditimpa. |

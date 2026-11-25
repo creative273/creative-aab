@@ -52,6 +52,15 @@ export default {
         "GET /api/me": ["all", () => ({ ok: true, user: publicUser(me) })],
         "POST /api/me/photo": ["all", () => setPhoto(env, me, body)],
         "GET /api/photos": ["all", () => getPhotos(env)],
+        "POST /api/me/profile": ["all", () => setProfile(env, me, body)],
+        "GET /api/profile/cover": ["all", () => getCover(env, url)],
+        "GET /api/feed": ["all", () => getFeed(env, me, url)],
+        "GET /api/feed/image": ["all", () => feedImage(env, url)],
+        "POST /api/feed/post": ["all", () => feedPost(env, me, body)],
+        "POST /api/feed/edit": ["all", () => feedEdit(env, me, body)],
+        "POST /api/feed/comment": ["all", () => feedComment(env, me, body)],
+        "POST /api/feed/react": ["all", () => feedReact(env, me, body)],
+        "POST /api/feed/delete": ["all", () => feedDelete(env, me, body)],
         "POST /api/password": ["all", () => changeOwnPassword(env, me, body)],
         "POST /api/request/done": ["all", () => requestDone(env, body, me)],
         "POST /api/kpi/content/preview": ["content", () => contentPreview(env, body)],
@@ -93,7 +102,13 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(Promise.all([refresh(env, { force: true }).catch(() => {}), googleRefreshAll(env), igSync(env).catch(() => {})]));
+    // Berurutan: Lark dulu, lalu Google, lalu Instagram dengan jatah panggilan terbatas,
+    // supaya batas 50 subrequest paket gratis tidak memutus pembaruan sheet.
+    ctx.waitUntil((async () => {
+      await refresh(env, { force: true }).catch(() => {});
+      await googleRefreshAll(env).catch(() => {});
+      await igSync(env).catch(() => {});
+    })());
   },
 };
 
@@ -317,10 +332,194 @@ async function getPhotos(env) {
   return { ok: true, photos };
 }
 
+// ---------- Timeline dan profil tim (v1.5) ----------
+// Isi timeline: postingan tim (teks, foto) dan kejadian otomatis dari widget (KPI, request, EP, POSTED).
+// Tiap item disimpan di KV sendiri (feed:item:<id>) supaya komentar dan reaksi tidak saling timpa satu daftar besar.
+// Daftar urutan ada di feed:index (maksimal FEED_KEEP item terbaru). Foto postingan di feed:img:<id>.
+const FEED_KEEP = 300;
+const FEED_PAGE = 15;
+const FEED_TEXT_MAX = 2000;
+const FEED_COMMENT_MAX = 500;
+const FEED_IMG_MAX = 450 * 1024;
+const COVER_MAX = 350 * 1024;
+export const REACTIONS = ["like", "love", "haha", "wow", "fire"];
+
+const feedId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+const multiline = (v, max) => String(v ?? "").replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, max);
+
+async function feedIndex(env) {
+  return (await env.STORE.get("feed:index", "json")) || [];
+}
+
+async function feedInsert(env, item) {
+  await env.STORE.put(`feed:item:${item.id}`, JSON.stringify(item));
+  const idx = await feedIndex(env);
+  idx.unshift({ id: item.id, at: item.at, by: item.by, kind: item.kind });
+  const drop = idx.splice(FEED_KEEP);
+  await env.STORE.put("feed:index", JSON.stringify(idx));
+  for (const d of drop) {
+    await env.STORE.delete(`feed:item:${d.id}`);
+    await env.STORE.delete(`feed:img:${d.id}`);
+  }
+  return item;
+}
+
+// Kejadian otomatis. Gagal menulis timeline tidak boleh menggagalkan input KPI.
+async function feedAuto(env, me, text, icon) {
+  if (!me || !text) return;
+  await feedInsert(env, { id: feedId(), at: new Date().toISOString(), by: me.username, member: me.member, kind: "auto", icon: icon || "info", text: String(text).slice(0, 300), reactions: {}, comments: [] }).catch(() => {});
+}
+
+function feedPublic(item, me) {
+  const counts = {};
+  for (const r of Object.values(item.reactions || {})) counts[r] = (counts[r] || 0) + 1;
+  return {
+    id: item.id, at: item.at, by: item.by, member: item.member, kind: item.kind, icon: item.icon || "", text: item.text,
+    image: item.image ? { ver: item.image.ver, w: item.image.w, h: item.image.h } : null,
+    reactions: counts, mine: (item.reactions || {})[me.username] || "", reactors: item.reactions || {},
+    comments: item.comments || [], editedAt: item.editedAt || null,
+  };
+}
+
+async function getFeed(env, me, url) {
+  const before = url.searchParams.get("before") || "";
+  const by = url.searchParams.get("by") || "";
+  const kind = url.searchParams.get("kind") || "";
+  const idx = (await feedIndex(env)).filter((x) => (!before || x.at < before) && (!by || x.by === by) && (!kind || x.kind === kind));
+  const page = idx.slice(0, FEED_PAGE);
+  const items = (await Promise.all(page.map((x) => env.STORE.get(`feed:item:${x.id}`, "json")))).filter(Boolean);
+  return { ok: true, items: items.map((i) => feedPublic(i, me)), more: idx.length > page.length, latest: (await feedIndex(env))[0]?.at || null };
+}
+
+async function feedPost(env, me, body) {
+  const text = multiline(body.text, FEED_TEXT_MAX);
+  const img = String(body.image || "");
+  if (!text && !img) throw fail("Tulis sesuatu atau pilih foto dulu.");
+  const item = { id: feedId(), at: new Date().toISOString(), by: me.username, member: me.member, kind: "post", text, reactions: {}, comments: [] };
+  if (img) {
+    if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(img)) throw fail("Format foto tidak dikenali. Pakai JPG atau PNG.");
+    if (img.length > FEED_IMG_MAX) throw fail("Foto terlalu besar setelah dikompres. Coba foto lain.");
+    await env.STORE.put(`feed:img:${item.id}`, img);
+    item.image = { ver: Date.now(), w: clampInt(body.w, 1, 4000), h: clampInt(body.h, 1, 4000) };
+  }
+  await feedInsert(env, item);
+  return { ok: true, item: feedPublic(item, me) };
+}
+
+const clampInt = (v, a, b) => Math.min(b, Math.max(a, Math.round(Number(v) || a)));
+
+async function feedLoad(env, id) {
+  const item = id && (await env.STORE.get(`feed:item:${id}`, "json"));
+  if (!item) throw fail("Postingan tidak ditemukan. Mungkin sudah dihapus.", 404);
+  return item;
+}
+
+async function feedComment(env, me, body) {
+  const text = multiline(body.text, FEED_COMMENT_MAX);
+  if (!text) throw fail("Komentar masih kosong.");
+  const item = await feedLoad(env, clean(body.id));
+  item.comments = item.comments || [];
+  if (item.comments.length >= 200) throw fail("Komentar di postingan ini sudah terlalu banyak.");
+  item.comments.push({ id: feedId(), at: new Date().toISOString(), by: me.username, text });
+  await env.STORE.put(`feed:item:${item.id}`, JSON.stringify(item));
+  return { ok: true, item: feedPublic(item, me) };
+}
+
+async function feedReact(env, me, body) {
+  const item = await feedLoad(env, clean(body.id));
+  const r = clean(body.reaction);
+  if (r && !REACTIONS.includes(r)) throw fail("Reaksi tidak dikenal.");
+  item.reactions = item.reactions || {};
+  if (!r || item.reactions[me.username] === r) delete item.reactions[me.username];
+  else item.reactions[me.username] = r;
+  await env.STORE.put(`feed:item:${item.id}`, JSON.stringify(item));
+  return { ok: true, item: feedPublic(item, me) };
+}
+
+// Hapus postingan atau komentar: pemiliknya sendiri, atau Ray.
+async function feedDelete(env, me, body) {
+  const item = await feedLoad(env, clean(body.id));
+  const lead = allowed(me, "lead");
+  const commentId = clean(body.commentId);
+  if (commentId) {
+    const c = (item.comments || []).find((x) => x.id === commentId);
+    if (!c) throw fail("Komentar tidak ditemukan.", 404);
+    if (c.by !== me.username && !lead) throw fail("Hanya penulis komentar atau Ray yang bisa menghapus.", 403);
+    item.comments = item.comments.filter((x) => x.id !== commentId);
+    await env.STORE.put(`feed:item:${item.id}`, JSON.stringify(item));
+    return { ok: true, item: feedPublic(item, me) };
+  }
+  if (item.by !== me.username && !lead) throw fail("Hanya pemilik postingan atau Ray yang bisa menghapus.", 403);
+  const idx = (await feedIndex(env)).filter((x) => x.id !== item.id);
+  await env.STORE.put("feed:index", JSON.stringify(idx));
+  await env.STORE.delete(`feed:item:${item.id}`);
+  if (item.image) await env.STORE.delete(`feed:img:${item.id}`);
+  return { ok: true, deleted: item.id };
+}
+
+async function feedEdit(env, me, body) {
+  const item = await feedLoad(env, clean(body.id));
+  if (item.kind !== "post" || item.by !== me.username) throw fail("Hanya pemilik postingan yang bisa mengubah.", 403);
+  const text = multiline(body.text, FEED_TEXT_MAX);
+  if (!text && !item.image) throw fail("Postingan tidak boleh kosong.");
+  item.text = text;
+  item.editedAt = new Date().toISOString();
+  await env.STORE.put(`feed:item:${item.id}`, JSON.stringify(item));
+  return { ok: true, item: feedPublic(item, me) };
+}
+
+async function feedImage(env, url) {
+  const id = url.searchParams.get("id") || "";
+  const image = id && (await env.STORE.get(`feed:img:${id}`));
+  if (!image) throw fail("Foto tidak ditemukan.", 404);
+  return { ok: true, image };
+}
+
+// Profil: bio dan jabatan disimpan di objek akun (kecil), foto sampul di KV sendiri.
+async function setProfile(env, me, body) {
+  const accounts = await getAccounts(env);
+  const acc = accounts[me.username];
+  if ("bio" in body) acc.bio = multiline(body.bio, 300);
+  if ("title" in body) acc.title = clean(body.title).slice(0, 60);
+  if ("cover" in body) {
+    const img = String(body.cover || "");
+    if (!img) {
+      await env.STORE.delete(`cover:${me.username}`);
+      acc.coverVer = 0;
+    } else {
+      if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(img)) throw fail("Format sampul tidak dikenali. Pakai JPG atau PNG.");
+      if (img.length > COVER_MAX) throw fail("Foto sampul terlalu besar setelah dikompres. Coba foto lain.");
+      await env.STORE.put(`cover:${me.username}`, img);
+      acc.coverVer = Date.now();
+    }
+  }
+  await putAccounts(env, accounts);
+  return { ok: true, profile: teamEntry(acc) };
+}
+
+async function getCover(env, url) {
+  const u = url.searchParams.get("u") || "";
+  const image = u && (await env.STORE.get(`cover:${u}`));
+  if (!image) throw fail("Sampul tidak ditemukan.", 404);
+  return { ok: true, image };
+}
+
+function teamEntry(a) {
+  return { ...publicUser(a), photoVer: a.photoVer || 0, bio: a.bio || "", title: a.title || "", coverVer: a.coverVer || 0 };
+}
+
+// Judul singkat request untuk timeline, dari cache sheet (tanpa panggilan Lark tambahan).
+async function requestLabel(env, row) {
+  const cache = await env.STORE.get("cache", "json");
+  const r = cache && (cache.requests || []).find((x) => x.row === row);
+  return r ? ` "${r.info.slice(0, 70)}"${r.user ? ` dari ${r.user}` : ""}` : ` baris ${row}`;
+}
+
 // ---------- Aktivitas dan dashboard Ray ----------
 
-async function logActivity(env, me, text) {
+async function logActivity(env, me, text, feed) {
   if (!me) return;
+  if (feed) await feedAuto(env, me, feed.text, feed.icon);
   const log = (await env.STORE.get("activity", "json")) || { items: [], last: {} };
   const at = new Date().toISOString();
   log.items.unshift({ at, who: me.username, member: me.member, text });
@@ -635,7 +834,7 @@ async function contentSubmit(env, body, me) {
     }
   }
   await writeRanges(env, cfg, ranges);
-  await logActivity(env, me, `CONTENT: ${added} konten baru, ${updated} diperbarui`);
+  await logActivity(env, me, `CONTENT: ${added} konten baru, ${updated} diperbarui`, added ? { text: `menambahkan ${added} konten baru ke KPI CONTENT`, icon: "content" } : null);
   await refresh(env, { force: true }).catch(() => {});
   return { ok: true, updated, added };
 }
@@ -681,7 +880,7 @@ async function appendImageRow(env, kind, body, me) {
     { range: `${cfg.reportId}!${b.first}${row}:${infoCol}${row}`, values: [[row - FIRST_ROW + 1, tanggal, text]] },
   ]);
   await writeImage(env, cfg, `${imgCol}${row}`, body.image, `${kind}-${row}.jpg`);
-  await logActivity(env, me, `${kind.toUpperCase()}: ${info.slice(0, 60)}`);
+  await logActivity(env, me, `${kind.toUpperCase()}: ${info.slice(0, 60)}`, { text: `mengirim hasil ${kind === "design" ? "design" : "video"}: ${info.slice(0, 120)}`, icon: kind });
   await refresh(env, { force: true }).catch(() => {});
   return { ok: true, row };
 }
@@ -745,7 +944,7 @@ async function upsertAigc(env, body, me) {
   await writeRanges(env, cfg, [
     { range: `${cfg.reportId}!AH${row}:AK${row}`, values: [[row - FIRST_ROW + 1, tanggal, produksi, upload]] },
   ]);
-  await logActivity(env, me, `AIGC ${tanggal}: ${produksi} produksi, ${upload} upload`);
+  await logActivity(env, me, `AIGC ${tanggal}: ${produksi} produksi, ${upload} upload`, { text: `input AIGC ${tanggal}: ${produksi} produksi, ${upload} upload`, icon: "aigc" });
   await refresh(env, { force: true }).catch(() => {});
   return { ok: true, row, replaced };
 }
@@ -761,7 +960,7 @@ async function requestDone(env, body, me) {
     { range: `${cfg.requestId}!F${row}:F${row}`, values: [[link]] },
     { range: `${cfg.requestId}!H${row}:H${row}`, values: [["DONE"]] },
   ]);
-  await logActivity(env, me, `Request selesai (baris ${row})`);
+  await logActivity(env, me, `Request selesai (baris ${row})`, { text: `menyelesaikan request${await requestLabel(env, row)}`, icon: "done" });
   await refresh(env, { force: true }).catch(() => {});
   return { ok: true };
 }
@@ -781,7 +980,7 @@ async function requestDecision(env, body, me) {
   const cfg = await getConfig(env);
   const row = await checkRequestRow(env, cfg, body);
   await writeRanges(env, cfg, [{ range: `${cfg.requestId}!G${row}:G${row}`, values: [[decision]] }]);
-  await logActivity(env, me, `Request baris ${row}: ${decision}`);
+  await logActivity(env, me, `Request baris ${row}: ${decision}`, { text: `${{ APPROVE: "menyetujui", PENDING: "menunda", REJECT: "menolak" }[decision]} request${await requestLabel(env, row)}`, icon: decision === "APPROVE" ? "done" : "request" });
   await refresh(env, { force: true }).catch(() => {});
   return { ok: true, decision };
 }
@@ -981,7 +1180,8 @@ async function refreshAll(env, me) {
 async function fullState(env, me, base) {
   const out = base || (await getState(env, me));
   const accounts = await getAccounts(env);
-  out.team = Object.values(accounts).filter((a) => a.active !== false).map((a) => ({ ...publicUser(a), photoVer: a.photoVer || 0 }));
+  out.team = Object.values(accounts).filter((a) => a.active !== false).map(teamEntry);
+  out.feedLatest = (await feedIndex(env))[0]?.at || null;
   const g = await getGoogleConfig(env);
   if (g.ep) out.ep = await getEp(env, me).catch((e) => ({ ok: false, error: e.message }));
   if (g.calendar && allowed(me, "content")) out.cal = await getCalendar(env).catch((e) => ({ ok: false, error: e.message }));
@@ -1154,7 +1354,7 @@ async function epDecision(env, body, me) {
   if (status) decisions[item.id] = { status, note: status === "REVISI" ? note : "", at: new Date().toISOString(), by: me.username, seq: Date.now() };
   else delete decisions[item.id];
   await env.STORE.put(key, JSON.stringify(decisions));
-  await logActivity(env, me, `EP "${(item.cover || item.format).slice(0, 40)}": ${status || "status dihapus"}`);
+  await logActivity(env, me, `EP "${(item.cover || item.format).slice(0, 40)}": ${status || "status dihapus"}`, status ? { text: `${status === "OKE" ? "menyetujui" : "meminta revisi"} EP "${(item.cover || item.format).slice(0, 60)}"${status === "REVISI" && note ? `: ${note.slice(0, 120)}` : ""}`, icon: status === "OKE" ? "done" : "ep" } : null);
   return getEp(env, me);
 }
 
@@ -1233,7 +1433,7 @@ async function epPosted(env, body, me) {
     await refreshCalendar(env);
   }
   await refreshEp(env);
-  await logActivity(env, me, `POSTED: "${(item.cover || item.format).slice(0, 40)}"`);
+  await logActivity(env, me, `POSTED: "${(item.cover || item.format).slice(0, 40)}"`, { text: `menandai POSTED "${(item.cover || item.format).slice(0, 60)}"`, icon: "posted" });
   return { ok: true, stamped, calendarRow, ep: await getEp(env, me) };
 }
 
@@ -1273,15 +1473,23 @@ const IG_DEFAULT_IDS = { AAB: "17841471637263858", NUSANTARA: "17841474840408535
 const isFbToken = (token) => /^EAA/.test(token);
 const IG_VER = "v25.0";
 export const IG_ACCOUNTS = ["AAB", "NUSANTARA"];
-const IG_MEDIA_PER_RUN = 6;
+const IG_MEDIA_PER_RUN = 12;
+// Jatah panggilan Instagram per akun per jalan (paket gratis: 50 subrequest per jalan, dibagi dengan Lark dan Google).
+const IG_BUDGET_CRON = 9;
+const IG_BUDGET_MANUAL = 20;
 const IG_PROFILE_EVERY_MS = 3 * 3600 * 1000;
 const IG_MEDIA_FRESH_MS = 2 * 3600 * 1000;
 const IG_KEEP_DAYS = 90;
 const IG_MEDIA_DAYS = 60;
-const IG_SHEET_EVERY_MS = 60 * 60 * 1000;
+const IG_SHEET_EVERY_MS = 4 * 60 * 60 * 1000;
 
 // t: { token, kind: "ig" | "fb", igId }. Untuk token fb, "me" dan "me/..." diarahkan ke ID akun IG.
 async function ig(path, t, params = {}) {
+  if (t.budget && t.budget.left-- <= 0) {
+    const e = fail("Instagram: jatah panggilan habis untuk jalan ini", 503);
+    e.budget = true;
+    throw e;
+  }
   const fb = t.kind === "fb";
   const p = fb && t.igId ? path.replace(/^me(?=\/|$)/, t.igId) : path;
   const u = new URL(`${fb ? FB_HOST : IG_HOST}/${p.startsWith("refresh_access_token") ? "" : IG_VER + "/"}${p}`);
@@ -1372,7 +1580,8 @@ async function igMediaInsights(t, m) {
   return out;
 }
 
-async function igSyncAccount(env, account, t, { force = false } = {}) {
+async function igSyncAccount(env, account, tok, { force = false } = {}) {
+  const t = { ...tok, budget: { left: force ? IG_BUDGET_MANUAL : IG_BUDGET_CRON } };
   const key = `ig:data:${account}`;
   const prev = (await env.STORE.get(key, "json")) || { account, daily: {}, media: [] };
   const data = JSON.parse(JSON.stringify(prev));
@@ -1398,7 +1607,7 @@ async function igSyncAccount(env, account, t, { force = false } = {}) {
           caption: clean(m.caption).slice(0, 160), type: m.media_type, product: m.media_product_type, kategori: kategoriOf(m),
           timestamp: m.timestamp, thumb: m.thumbnail_url || (m.media_type === "IMAGE" ? m.media_url : "") || "",
           likes: m.like_count ?? o.likes ?? 0, comments: m.comments_count ?? o.comments ?? 0,
-          views: o.views ?? null, reach: o.reach ?? null, shares: o.shares ?? null, saved: o.saved ?? null, insightsAt: o.insightsAt || 0,
+          views: o.views ?? null, reach: o.reach ?? null, shares: o.shares ?? null, saved: o.saved ?? null, insightsAt: o.insightsAt || 0, insightError: o.insightError || "",
         };
       });
     // Insight akun hari ini dan kemarin (kemarin final setelah lewat tengah malam WIB).
@@ -1419,17 +1628,29 @@ async function igSyncAccount(env, account, t, { force = false } = {}) {
   }
   // Insight per konten, bergiliran: konten seminggu terakhir didahulukan.
   const week = now - 7 * 864e5;
+  // Urutan: konten yang belum pernah punya angka (terbaru dulu), lalu konten seminggu terakhir, lalu yang paling lama tidak diperbarui.
+  // Konten yang ditolak Instagram dicoba lagi setelah 6 jam. Sinkron manual tidak mengulang yang baru diperbarui 10 menit terakhir.
+  const empty = (m) => m.views === null && m.reach === null;
+  const due = (m) => {
+    const age = now - (m.insightsAt || 0);
+    if (m.insightError) return age > 6 * 3600 * 1000;
+    if (force) return age > 10 * 60 * 1000;
+    return empty(m) || age > IG_MEDIA_FRESH_MS;
+  };
   const queue = (data.media || [])
-    .filter((m) => force || now - (m.insightsAt || 0) > IG_MEDIA_FRESH_MS)
-    .sort((a, b) => (Date.parse(b.timestamp) >= week) - (Date.parse(a.timestamp) >= week) || (a.insightsAt || 0) - (b.insightsAt || 0))
-    .slice(0, force ? 10 : IG_MEDIA_PER_RUN);
+    .filter(due)
+    .sort((a, b) => empty(b) - empty(a) || (empty(a) && empty(b) ? Date.parse(b.timestamp) - Date.parse(a.timestamp) : 0) ||
+      (Date.parse(b.timestamp) >= week) - (Date.parse(a.timestamp) >= week) || (a.insightsAt || 0) - (b.insightsAt || 0))
+    .slice(0, force ? 20 : IG_MEDIA_PER_RUN);
   for (const m of queue) {
     try {
       const s = await igMediaInsights(t, m);
-      Object.assign(m, { views: s.views ?? m.views, reach: s.reach ?? m.reach, likes: s.likes ?? m.likes, comments: s.comments ?? m.comments, shares: s.shares ?? m.shares, saved: s.saved ?? m.saved, insightsAt: now });
+      Object.assign(m, { views: s.views ?? m.views, reach: s.reach ?? m.reach, likes: s.likes ?? m.likes, comments: s.comments ?? m.comments, shares: s.shares ?? m.shares, saved: s.saved ?? m.saved, insightsAt: now, insightError: "" });
     } catch (e) {
+      if (e.budget) break; // jatah habis: sisanya dilanjutkan jalan berikutnya
+      if (e.igCode === 190) throw e; // token bermasalah: berhenti dan tampilkan error
       m.insightsAt = now; // jangan diulang terus kalau Instagram menolak satu konten
-      if (e.status === 409) break; // token bermasalah: berhenti
+      m.insightError = String(e.message || "").slice(0, 200);
     }
   }
   data.updatedAt = now;
@@ -1494,7 +1715,7 @@ async function igAllMedia(env) {
 
 const sheetMetrics = (m) => [m.views ?? 0, m.likes ?? 0, m.comments ?? 0, (m.shares ?? 0) + (m.saved ?? 0)];
 
-// Isi otomatis Views/Likes/Comment/Share & Save di blok CONTENT untuk konten yang sudah ada di sheet (tiap jam).
+// Isi otomatis Views/Likes/Comment/Share & Save di blok CONTENT untuk konten yang sudah ada di sheet (tiap 4 jam).
 async function igSheetSync(env, { force = false } = {}) {
   const cfg = await env.STORE.get("config", "json");
   if (!cfg) return { updated: 0 };
@@ -1516,6 +1737,12 @@ async function igSheetSync(env, { force = false } = {}) {
   return { updated: ranges.length };
 }
 
+// Kalau banyak konten ditolak Instagram, tampilkan satu contoh pesannya supaya penyebabnya kelihatan.
+function insightProblem(d) {
+  const bad = ((d && d.media) || []).filter((m) => m.insightError && m.views === null && m.reach === null);
+  return bad.length >= 3 ? `Insight ${bad.length} konten ditolak Instagram: ${bad[0].insightError}` : "";
+}
+
 // Untuk halaman Insight IG (semua akun boleh lihat).
 async function igOverview(env) {
   const tokens = await igTokens(env);
@@ -1527,7 +1754,7 @@ async function igOverview(env) {
     accounts[acc] = {
       connected: !!t,
       username: (d && d.username) || (t && t.username) || "",
-      error: (t && t.error) || "",
+      error: (t && t.error) || insightProblem(d),
       expiresAt: t ? t.expiresAt : null,
       followers: d ? d.followers : null,
       mediaCount: d ? d.mediaCount : null,

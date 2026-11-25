@@ -124,5 +124,31 @@ http.createServer(async (req, res) => {
     for (let i = 1; i < 14; i++) { const k = new Date(Date.now() - i * 864e5).toISOString().slice(0, 10); d.daily[k] = { views: 700 + ((i * 137) % 600), reach: 500 + ((i * 91) % 300), total_interactions: 20 + (i * 7) % 40, followers: 19400 - i * 12 }; }
     kv.set("ig:data:AAB", JSON.stringify(d));
   }
+  if (process.env.WITH_FEED) {
+    const tok = {};
+    for (const u of ["zahra", "aqil", "albar", "rifqi"]) tok[u] = (await go("/api/login", { username: u, password: "password123" })).token;
+    await go("/api/me/profile", { bio: "Ngurus IG @agensianakbangsa dari take sampai upload.", title: "Social Media Specialist" }, tok.zahra);
+    await go("/api/me/profile", { bio: "Desain cetak dan motion. Kopi susu garis keras.", title: "Graphic Designer" }, tok.aqil);
+    await go("/api/me/profile", { bio: "Creative lead. AIGC, sosmed, event.", title: "Creative Lead" }, token);
+    const st = await (await worker.fetch(new Request("http://x/api/state", { headers: { Authorization: "Bearer " + token } }), env, {})).json();
+    const rq = st.requests.find((r) => r.user === "ARIL SULAEMAN");
+    if (rq) await go("/api/request/decision", { row: rq.row, id: rq.id, decision: "APPROVE" }, token);
+    if (process.env.WITH_GOOGLE) await go("/api/ep/decision", { id: "s_kata", status: "OKE" }, token);
+    await go("/api/kpi/aigc", { tanggal: "11/24/2026", produksi: 12, upload: 10 }, tok.rifqi);
+    const p1 = await go("/api/feed/post", { text: "Take konten Dos & Don'ts live affiliate hari ini aman semua. Besok editing ya @Albar 🙏" }, tok.zahra);
+    await go("/api/feed/react", { id: p1.item.id, reaction: "fire" }, tok.albar);
+    await go("/api/feed/react", { id: p1.item.id, reaction: "like" }, token);
+    await go("/api/feed/comment", { id: p1.item.id, text: "Siap, nanti sore aku mulai." }, tok.albar);
+    await go("/api/feed/comment", { id: p1.item.id, text: "Mantap Zahra. Jangan lupa cover-nya." }, token);
+    await go("/api/feed/post", { text: "Banner Shopee 12.12 sudah final, cek di folder DESIGN ya." }, tok.aqil);
+    const fsm = await import("node:fs");
+    if (fsm.existsSync("/tmp/ui/post.jpg")) {
+      const img = "data:image/jpeg;base64," + fsm.readFileSync("/tmp/ui/post.jpg").toString("base64");
+      const p2 = await go("/api/feed/post", { text: "Moodboard event creative minggu depan. Gimana menurut kalian?", image: img, w: 1200, h: 750 }, token);
+      await go("/api/feed/react", { id: p2.item.id, reaction: "love" }, tok.zahra);
+      await go("/api/feed/react", { id: p2.item.id, reaction: "love" }, tok.aqil);
+      await go("/api/feed/comment", { id: p2.item.id, text: "Warna oranyenya cakep kak!" }, tok.zahra);
+    }
+  }
   console.log("dev server :8787");
 });

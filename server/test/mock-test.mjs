@@ -43,6 +43,8 @@ const IG = {
   "tok-nus-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": { id: "1782", username: "nusantara.mcn", followers: 6452,
     media: [{ id: "m3", shortcode: "DgCOLLAB001", media_type: "VIDEO", media_product_type: "REELS", ago: 2 * 864e5, views: 800, reach: 700, likes: 10, comments: 1, shares: 0, saved: 0 }] },
 };
+IG["tok-big-gggggggggggggggggggggggggggggggggggggggggggg"] = { id: "1799", username: "nusantara.mcn", followers: 6452,
+  media: Array.from({ length: 30 }, (_, i) => ({ id: "b" + i, shortcode: "DgBIG" + String(i).padStart(6, "0"), media_type: i % 5 ? "VIDEO" : "CAROUSEL_ALBUM", media_product_type: i % 5 ? "REELS" : "FEED", ago: (1 + i * 0.7) * 864e5, views: 100 + i, reach: 90 + i, likes: i, comments: 1, shares: 0, saved: 0, broken: i === 2 })) };
 function igMock(u) {
   const tok = u.searchParams.get("access_token");
   igCalls.push(u.pathname);
@@ -59,6 +61,7 @@ function igMock(u) {
   const mm = path.match(/^(\w+)\/insights$/);
   if (mm) {
     const m = acc.media.find((x) => x.id === mm[1]);
+    if (m.broken) return new Response(JSON.stringify({ error: { message: "(#10) Media posted before business conversion", code: 10 } }), { status: 400 });
     const metrics = u.searchParams.get("metric").split(",");
     if (metrics.includes("views") && m.views === null) return new Response(JSON.stringify({ error: { message: "(#100) metric views not supported", code: 100 } }), { status: 400 });
     return ok({ data: metrics.map((k) => ({ name: k, period: "lifetime", values: [{ value: m[k] }] })) });
@@ -69,6 +72,7 @@ function igMock(u) {
 // Token Login Terpadu (EAA) lewat graph.facebook.com: diterjemahkan ke data IG tiruan di atas.
 const FB = {
   "EAAaab-ddddddddddddddddddddddddddddddddddddddddddddd": { ids: { "17841471637263858": "tok-aab-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, pages: [] },
+  "EAAbig-hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh": { ids: { "17841474840408535": "tok-big-gggggggggggggggggggggggggggggggggggggggggggg" }, pages: [] },
   "EAApage-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": { ids: { "555": "tok-nus-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, pages: [{ id: "p1", instagram_business_account: { id: "555", username: "nusantara.mcn" } }] },
 };
 const fbCalls = [];
@@ -448,5 +452,108 @@ await worker.scheduled({}, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.equal(igCalls.filter((p) => p === "/refresh_access_token").length, refBefore);
 assert.equal(JSON.parse(kv.get("ig:accounts")).AAB.error || "", "");
+
+// 18. Banyak konten: jatah panggilan per jalan dipatuhi, satu konten bermasalah tidak menghentikan yang lain
+assert.equal((await call("POST", "/api/ig/disconnect", { account: "NUSANTARA" })).status, 200);
+r = await call("POST", "/api/ig/connect", { account: "NUSANTARA", token: "EAAbig-hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh" });
+assert.equal(r.status, 200, JSON.stringify(r.data));
+let nus = JSON.parse(kv.get("ig:data:NUSANTARA"));
+const doneAfterConnect = nus.media.filter((m) => m.views !== null).length;
+assert.ok(doneAfterConnect >= 12, "connect langsung mengisi banyak konten: " + doneAfterConnect);
+assert.ok(nus.media.find((m) => m.id === "b2").views === null, "konten bermasalah dilewati");
+for (let run = 0; run < 4; run++) {
+  // anggap insight sudah basi supaya cron mengambil ulang
+  const d = JSON.parse(kv.get("ig:data:NUSANTARA")); d.media.forEach((m) => { if (m.views === null) m.insightsAt = 0; }); kv.set("ig:data:NUSANTARA", JSON.stringify(d));
+  const n0 = fbCalls.filter((x) => x.includes("/b")).length;
+  await worker.scheduled({}, env, { waitUntil: (p) => p });
+  await new Promise((res) => setTimeout(res, 50));
+  const used = fbCalls.filter((x) => x.includes("/b")).length - n0;
+  assert.ok(used <= 9, "jatah per jalan: " + used);
+}
+nus = JSON.parse(kv.get("ig:data:NUSANTARA"));
+assert.equal(nus.media.filter((m) => m.views === null).length, 1, "semua konten terisi kecuali yang ditolak Instagram");
+assert.match(nus.media.find((m) => m.id === "b2").insightError, /business conversion/);
+// Banyak konten ditolak: pesannya tampil di Insight
+const dd = JSON.parse(kv.get("ig:data:NUSANTARA"));
+dd.media.slice(0, 3).forEach((m) => { m.views = null; m.reach = null; m.insightError = "Instagram: (#10) contoh"; });
+kv.set("ig:data:NUSANTARA", JSON.stringify(dd));
+r = await call("GET", "/api/ig", null, T.aqil);
+assert.match(r.data.accounts.NUSANTARA.error, /Insight \d+ konten ditolak Instagram/);
+// Konten lama tanpa angka (sisa sinkron sebelumnya) langsung diambil di cron berikutnya walau baru dicoba
+const d3 = JSON.parse(kv.get("ig:data:NUSANTARA"));
+d3.media.forEach((m) => { m.insightError = ""; m.insightsAt = Date.now(); });
+d3.media.slice(20, 24).forEach((m) => { m.views = null; m.reach = null; });
+kv.set("ig:data:NUSANTARA", JSON.stringify(d3));
+await worker.scheduled({}, env, { waitUntil: (p) => p });
+await new Promise((res) => setTimeout(res, 50));
+assert.equal(JSON.parse(kv.get("ig:data:NUSANTARA")).media.slice(20, 24).filter((m) => m.views === null).length, 0, "konten kosong didahulukan");
+
+// 19. Timeline dan profil (v1.5)
+for (const [u, m] of [["albar2", "albar"]]) {
+  assert.equal((await call("POST", "/api/accounts/save", { username: u, member: m, password: "pass-" + u })).status, 200);
+  T[u] = (await call("POST", "/api/login", { username: u, password: "pass-" + u })).data.token;
+}
+r = await call("GET", "/api/feed", null, T.zahra);
+assert.equal(r.status, 200);
+const autos = r.data.items.filter((i) => i.kind === "auto");
+assert.ok(autos.length >= 3, "kejadian otomatis masuk timeline: " + autos.length);
+assert.ok(autos.some((i) => /menyetujui request|menunda request|menolak request/.test(i.text)), "keputusan request");
+assert.ok(autos.some((i) => /konten baru ke KPI CONTENT/.test(i.text)), "input content");
+assert.equal((await call("POST", "/api/feed/post", { text: "   " }, T.zahra)).status, 400);
+const png = "data:image/png;base64," + Buffer.from("fakepng").toString("base64");
+r = await call("POST", "/api/feed/post", { text: "Shooting hari ini\nlancar", image: png, w: 1200, h: 800 }, T.zahra);
+assert.equal(r.status, 200, JSON.stringify(r.data));
+const pid = r.data.item.id;
+assert.equal(r.data.item.text, "Shooting hari ini\nlancar");
+assert.equal(r.data.item.image.w, 1200);
+r = await call("GET", `/api/feed/image?id=${pid}`, null, T.aqil);
+assert.equal(r.data.image, png);
+// reaksi: pilih, ganti, batal
+r = await call("POST", "/api/feed/react", { id: pid, reaction: "love" }, T.aqil);
+assert.deepEqual(r.data.item.reactions, { love: 1 });
+r = await call("POST", "/api/feed/react", { id: pid, reaction: "fire" }, T.albar2);
+r = await call("POST", "/api/feed/react", { id: pid, reaction: "fire" }, T.aqil);
+assert.deepEqual(r.data.item.reactions, { fire: 2 });
+assert.equal(r.data.item.mine, "fire");
+r = await call("POST", "/api/feed/react", { id: pid, reaction: "fire" }, T.aqil);
+assert.deepEqual(r.data.item.reactions, { fire: 1 }, "klik reaksi yang sama = batal");
+assert.equal((await call("POST", "/api/feed/react", { id: pid, reaction: "angry" }, T.aqil)).status, 400);
+// komentar
+r = await call("POST", "/api/feed/comment", { id: pid, text: "Mantap!" }, T.aqil);
+assert.equal(r.data.item.comments.length, 1);
+const cid = r.data.item.comments[0].id;
+assert.equal((await call("POST", "/api/feed/delete", { id: pid, commentId: cid }, T.albar2)).status, 403, "bukan penulis komentar");
+assert.equal((await call("POST", "/api/feed/delete", { id: pid, commentId: cid }, T.aqil)).status, 200);
+// edit hanya pemilik
+assert.equal((await call("POST", "/api/feed/edit", { id: pid, text: "ubah" }, T.aqil)).status, 403);
+r = await call("POST", "/api/feed/edit", { id: pid, text: "Shooting lancar" }, T.zahra);
+assert.equal(r.data.item.text, "Shooting lancar"); assert.ok(r.data.item.editedAt);
+// filter per orang (profil)
+r = await call("GET", "/api/feed?by=zahra", null, T.aqil);
+assert.ok(r.data.items.length && r.data.items.every((i) => i.by === "zahra"));
+// paging
+for (let i = 0; i < 20; i++) await call("POST", "/api/feed/post", { text: "isi " + i }, T.albar2);
+r = await call("GET", "/api/feed", null, T.aqil);
+assert.equal(r.data.items.length, 15); assert.equal(r.data.more, true);
+const r2 = await call("GET", `/api/feed?before=${encodeURIComponent(r.data.items[14].at)}`, null, T.aqil);
+assert.ok(r2.data.items.length > 0 && r2.data.items.every((i) => i.at < r.data.items[14].at));
+// hapus: bukan pemilik ditolak, Ray boleh
+assert.equal((await call("POST", "/api/feed/delete", { id: pid }, T.albar2)).status, 403);
+assert.equal((await call("POST", "/api/feed/delete", { id: pid })).status, 200);
+assert.equal(kv.get(`feed:img:${pid}`), undefined, "foto ikut terhapus");
+r = await call("GET", "/api/feed?by=zahra&kind=post", null, T.aqil);
+assert.equal(r.data.items.length, 0);
+// profil
+r = await call("POST", "/api/me/profile", { bio: "Suka kopi\ndan konten", title: "Social Media Specialist", cover: png }, T.zahra);
+assert.equal(r.status, 200, JSON.stringify(r.data));
+assert.ok(r.data.profile.coverVer > 0);
+r = await call("GET", "/api/state", null, T.aqil);
+const zp = r.data.team.find((x) => x.username === "zahra");
+assert.equal(zp.bio, "Suka kopi\ndan konten"); assert.equal(zp.title, "Social Media Specialist");
+assert.ok(r.data.feedLatest);
+r = await call("GET", "/api/profile/cover?u=zahra", null, T.aqil);
+assert.equal(r.data.image, png);
+assert.equal((await call("POST", "/api/me/profile", { cover: "" }, T.zahra)).status, 200);
+assert.equal((await call("GET", "/api/profile/cover?u=zahra", null, T.aqil)).status, 404);
 
 console.log("SEMUA TES LULUS. Panggilan Lark tiruan:", calls.length);

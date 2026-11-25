@@ -105,6 +105,9 @@ async function loadState({ refresh = false } = {}) {
     await applyGoogle(data);
     await syncPhotos();
     await checkNewRequests(data.requests || []);
+    // Timeline terbuka dan ada kabar baru: muat ulang diam-diam.
+    const fa = (ui.feeds || {}).all;
+    if (currentPage() === "feed" && fa && !fa.loading && data.feedLatest && (!fa.items[0] || data.feedLatest > fa.items[0].at)) loadFeed();
   } catch (e) {
     ui.error = e.message;
   } finally {
@@ -138,7 +141,7 @@ async function checkNewRequests(requests, { silent = false } = {}) {
 // ---------- Render ----------
 function render() {
   applyTheme();
-  if (!isFull() && (ui.tab === "home" || ui.tab === "ig")) ui.tab = "request";
+  if (!isFull() && ["home", "ig", "feed", "team", "profile"].includes(ui.tab)) ui.tab = "request";
   renderBar();
   renderSide();
   renderPageHead();
@@ -156,6 +159,15 @@ function render() {
   } else if (ui.tab === "home") {
     view.innerHTML = homeView();
     bindHome();
+  } else if (ui.tab === "feed" && isFull()) {
+    view.innerHTML = (ui.feedErr ? `<p class="msg err">${esc(ui.feedErr)}</p>` : "") + feedView();
+    bindFeed();
+  } else if (ui.tab === "team" && isFull()) {
+    view.innerHTML = teamView();
+    bindTeam();
+  } else if (ui.tab === "profile" && isFull()) {
+    view.innerHTML = (ui.feedErr ? `<p class="msg err">${esc(ui.feedErr)}</p>` : "") + profileView();
+    bindProfile();
   } else if (ui.tab === "ig" && isFull()) {
     view.innerHTML = igView();
     bindIg();
@@ -451,7 +463,7 @@ function contentForm() {
       <button class="btn secondary" data-act="resetBulk">Batal</button>`;
   }
   return `<h2>Konten baru dari Instagram</h2>
-    <p class="hint">Angka konten yang sudah ada di sheet diperbarui otomatis tiap jam. Ambil daftar postingan bulan ini yang belum ada di sheet, lalu isi nama konten dan pillar.</p>
+    <p class="hint">Angka konten yang sudah ada di sheet diperbarui otomatis tiap 4 jam. Ambil daftar postingan bulan ini yang belum ada di sheet, lalu isi nama konten dan pillar.</p>
     <button class="btn" data-act="fromIg" ${f.parsing ? "disabled" : ""}>${f.parsing ? "Mengambil dari Instagram…" : "Ambil postingan baru"}</button>
     <div class="section"></div>
     <h2>Atau upload file Anak Bangsa Tools</h2>
@@ -1319,10 +1331,27 @@ function onAccent(hex) {
   return contrast(L, luminance("#08111D")) >= contrast(L, 1) ? "#08111D" : "#FFFFFF";
 }
 
+// v1.5: warna aksen ikut mewarnai latar, sidebar, dan kartu. tint 0 = netral seperti v1.3.
+const THEME_BASE = {
+  dark: { bg: [8, 17, 29], bar: [5, 11, 20], panel: [14, 26, 43], panel2: [19, 35, 58] },
+  light: { bg: [233, 238, 246], bar: [255, 255, 255], panel: [255, 255, 255], panel2: [241, 245, 251] },
+};
+function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function tintChannels(acc, light, tint) {
+  const a = hexRgb(acc);
+  const base = THEME_BASE[light ? "light" : "dark"];
+  // Gelap: aksen diredupkan supaya teks putih tetap kontras. Terang: aksen dipudarkan ke putih.
+  const target = light ? a.map((c) => Math.round(c * 0.22 + 255 * 0.78)) : a.map((c) => Math.round(c * 0.3));
+  const mix = (b, k) => b.map((c, i) => Math.round(c * (1 - k) + target[i] * k)).join(" ");
+  const k = clamp(tint, 0, 1);
+  return { "--bg-c": mix(base.bg, 0.75 * k), "--bar-c": mix(base.bar, 0.7 * k), "--panel-c": mix(base.panel, 0.8 * k), "--panel2-c": mix(base.panel2, 0.8 * k) };
+}
+
 function applyTheme() {
   const s = ui.settings;
   const r = document.documentElement;
   const acc = hexOk(s.accent) ? s.accent : DEFAULT_ACCENT;
+  for (const [k, v] of Object.entries(tintChannels(acc, s.theme === "light", s.tint ?? 0.5))) r.style.setProperty(k, v);
   r.style.setProperty("--accent", acc);
   r.style.setProperty("--on-accent", onAccent(acc));
   r.style.setProperty("--glass", String(clamp(s.glass ?? 0.55, 0.1, 0.9)));
@@ -1333,7 +1362,7 @@ function applyTheme() {
 
 async function setMode(mode) {
   ui.settings = await window.aab.setMode(mode);
-  if (mode === "compact" && (ui.tab === "home" || ui.tab === "ig")) ui.tab = "request";
+  if (mode === "compact" && ["home", "ig", "feed", "team", "profile"].includes(ui.tab)) ui.tab = "request";
   if (mode === "full" && configured() && ui.tab === "request" && ui.view === "list") ui.tab = "home";
   if (ui.view === "detail" && ui.tab !== "ep") ui.view = "list";
   render();
@@ -1393,6 +1422,9 @@ const ICONS = {
   cal: '<rect x="3" y="4" width="14" height="13" rx="2"/><path d="M3 8h14M7 2v4M13 2v4"/>',
   accounts: '<circle cx="7" cy="7" r="3"/><circle cx="14" cy="8" r="2.5"/><path d="M2 17c0-3 2.5-5 5-5s5 2 5 5M12 13c3 0 6 1.5 6 4"/>',
   ig: '<rect x="3" y="3" width="14" height="14" rx="4"/><circle cx="10" cy="10" r="3.2"/><circle cx="14.2" cy="5.8" r=".6" fill="currentColor"/>',
+  feed: '<path d="M4 4h12v9H8l-4 3z"/><path d="M7 8h6M7 10.5h4"/>',
+  team: '<circle cx="10" cy="7" r="3"/><path d="M4 17c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/>',
+  profile: '<circle cx="10" cy="7" r="3"/><path d="M4 17c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/>',
   settings: '<circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6"/>',
 };
 function currentPage() {
@@ -1407,13 +1439,15 @@ function navItems() {
   return [
     { group: "HARIAN" },
     { id: "home", label: "Ringkasan", c: "#7FB2EE" },
+    { id: "feed", label: "Timeline", c: "#9FD4FF", badge: feedHasNew() ? "Baru" : 0 },
     { id: "request", label: "Request creative", c: "#F3C77A", badge: reqOpen },
     { id: "input", label: isLead() ? "KPI tim" : "Input KPI", c: "#8FE3B5" },
     { group: "KONTEN" },
     { id: "ep", label: "Editorial plan", c: "#FFB4BB", badge: epBadge },
     ...(canCal() ? [{ id: "cal", label: "Kalender konten", c: "#C9B6FF" }] : []),
     { id: "ig", label: "Insight Instagram", c: "#F3A6C8" },
-    { group: isLead() ? "TIM" : "AKUN" },
+    { group: "TIM" },
+    { id: "team", label: "Profil tim", c: "#FFD8A8" },
     ...(isLead() ? [{ id: "accounts", label: "Akun tim", c: "#D6E0EC" }] : []),
     { id: "settings", label: "Pengaturan", c: "#D6E0EC" },
   ];
@@ -1424,7 +1458,7 @@ function renderSide() {
   side.hidden = !show;
   if (!show) return;
   const u = ui.settings.user || {};
-  const cur = currentPage();
+  const cur = currentPage() === "profile" ? "team" : currentPage();
   const role = isLead() ? "Creative Lead" : `Tim creative, blok ${(member() || {}).block || ""}`;
   const t = ui.data && ui.data.fetchedAt ? new Date(ui.data.fetchedAt) : null;
   side.innerHTML = `
@@ -1450,6 +1484,8 @@ function goPage(id, extra = {}) {
   else if (id === "accounts") { ui.view = "accounts"; ui.accounts = null; loadAccounts(); }
   else { ui.tab = id; ui.view = "list"; }
   Object.assign(ui, extra);
+  if (id === "feed") delete (ui.feeds || {}).all;
+  if (id === "profile") delete (ui.feeds || {})[`p:${ui.profileUser}`];
   render();
   if (isLead() && (id === "home" || id === "input")) loadState();
   if (id === "ig") loadIg();
@@ -1478,6 +1514,9 @@ function renderPageHead() {
     cal: ["Kalender konten", ui.cal && ui.cal.title ? ui.cal.title : "Content Calendar bulan ini"],
     accounts: ["Akun tim", "Buat akun, reset password, atau nonaktifkan akun"],
     ig: ["Insight Instagram", "Data resmi dari Instagram untuk akun AAB dan NUSANTARA"],
+    feed: ["Timeline", "Kabar dan aktivitas tim creative"],
+    team: ["Profil tim", "Kenalan lebih dekat dengan tim creative"],
+    profile: ["Profil", "Foto, bio, dan aktivitas"],
     settings: ["Pengaturan", "Tampilan berlaku di laptop ini. Foto profil terlihat oleh seluruh tim."],
   };
   const [h, p] = heads[currentPage()] || heads.home;
@@ -1666,7 +1705,9 @@ function lookSection() {
       ${ACCENTS.map((c) => `<button class="sw" data-css="--c:${c}" data-accent="${c}" aria-pressed="${acc.toUpperCase() === c}" aria-label="Aksen ${c}"></button>`).join("")}
       <span class="sw-custom${custom ? " on" : ""}" title="Pilih warna sendiri"><input type="color" id="accentPick" value="${esc(acc)}" aria-label="Pilih warna aksen sendiri"></span>
     </div>
-    <p class="hint">Berlaku di jendela penuh, widget kecil, dan pop-up di laptop ini.</p>
+    <label for="tintRange">Warna latar dan kartu</label>
+    <input type="range" id="tintRange" min="0" max="1" step="0.05" value="${clamp(s.tint ?? 0.5, 0, 1)}">
+    <p class="hint">Geser ke kiri untuk latar netral, ke kanan supaya sidebar, kartu, dan latar ikut berwarna. Berlaku di jendela penuh dan widget kecil di laptop ini.</p>
   </div>
   <div class="section">
     <h2>Kaca dan tampilan</h2>
@@ -1692,8 +1733,20 @@ function bindLook() {
   document.querySelectorAll("[data-accent]").forEach((b) => b.addEventListener("click", async () => { await save({ accent: b.dataset.accent }); render(); }));
   const pick = $("accentPick");
   if (pick) {
-    pick.addEventListener("input", () => { document.documentElement.style.setProperty("--accent", pick.value); document.documentElement.style.setProperty("--on-accent", onAccent(pick.value)); });
+    pick.addEventListener("input", () => {
+      const r = document.documentElement;
+      r.style.setProperty("--accent", pick.value); r.style.setProperty("--on-accent", onAccent(pick.value));
+      for (const [k, v] of Object.entries(tintChannels(pick.value, ui.settings.theme === "light", ui.settings.tint ?? 0.5))) r.style.setProperty(k, v);
+    });
     pick.addEventListener("change", async () => { await save({ accent: pick.value }); render(); });
+  }
+  const tr = $("tintRange");
+  if (tr) {
+    tr.addEventListener("input", () => {
+      const acc = hexOk(ui.settings.accent) ? ui.settings.accent : DEFAULT_ACCENT;
+      for (const [k, v] of Object.entries(tintChannels(acc, ui.settings.theme === "light", +tr.value))) document.documentElement.style.setProperty(k, v);
+    });
+    tr.addEventListener("change", () => save({ tint: +tr.value }));
   }
   const g = $("glassRange");
   if (g) {
@@ -1808,7 +1861,7 @@ function igView() {
         <tbody>${media.map((m) => `<tr><td><a href="${esc(m.permalink)}" target="_blank" rel="noopener">${esc((m.caption || "(tanpa caption)").slice(0, 60))}</a><small>${esc(m.kategori)}</small></td>
           <td>${esc(fmtDate(isoDay(new Date(m.timestamp))))}</td><td>${nf(m.views)}</td><td>${nf(m.reach)}</td><td>${nf(m.likes)}</td><td>${nf(m.comments)}</td><td>${nf(m.shares)}</td><td>${nf(m.saved)}</td></tr>`).join("")}</tbody>
       </table></div>
-      <p class="hint">${ui.ig.sheetSyncAt ? `Angka konten yang sudah ada di blok CONTENT ikut diperbarui otomatis tiap jam (terakhir ${esc(ago(new Date(ui.ig.sheetSyncAt).toISOString()))}).` : "Angka di blok CONTENT diperbarui otomatis tiap jam."}</p>
+      <p class="hint">${ui.ig.sheetSyncAt ? `Angka konten yang sudah ada di blok CONTENT ikut diperbarui otomatis tiap 4 jam (terakhir ${esc(ago(new Date(ui.ig.sheetSyncAt).toISOString()))}).` : "Angka di blok CONTENT diperbarui otomatis tiap 4 jam."}</p>
     </section>
   </div>`;
 }
@@ -1868,6 +1921,353 @@ function bindIgSettings() {
     catch (e) { ui.form = { igMsgAcc: acc, igMsg: e.message, igMsgType: "err" }; }
     render();
   }));
+}
+
+// ===================== v1.5: Timeline, tim, profil =====================
+const REACTS = [["like", "👍", "Suka"], ["love", "❤️", "Love"], ["haha", "😂", "Haha"], ["wow", "😮", "Wow"], ["fire", "🔥", "Keren"]];
+const DEFAULT_TITLE = { ray: "Creative Lead", fitria: "Social Media Specialist", athallah: "Graphic Designer", albar: "Video Editor", rifqi: "AIGC Content Specialist" };
+const AUTO_ICON = {
+  content: '<path d="M4 16V9M10 16V4M16 16v-5"/>', design: '<rect x="3" y="3" width="14" height="14" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="M17 13l-4-4-7 8"/>',
+  video: '<rect x="3" y="5" width="10" height="10" rx="2"/><path d="M13 9l4-2v6l-4-2"/>', aigc: '<path d="M10 3l1.8 4.2L16 9l-4.2 1.8L10 15l-1.8-4.2L4 9l4.2-1.8z"/>',
+  done: '<path d="M4 10.5l4 4 8-9"/>', request: '<path d="M4 5h12M4 10h12M4 15h7"/>', ep: '<rect x="3" y="4" width="14" height="10" rx="2"/><path d="M7 17h6"/>',
+  posted: '<path d="M4 10l12-6-4 13-3-5z"/>', info: '<circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6h.01"/>',
+};
+
+const profileOf = (username) => {
+  const t = teamBy("username", username) || {};
+  const m = MEMBERS.find((x) => x.id === t.member) || {};
+  return { username, member: t.member, name: t.name || username, short: m.short || t.name || username, title: t.title || DEFAULT_TITLE[t.member] || "", bio: t.bio || "", coverVer: t.coverVer || 0 };
+};
+const nameLink = (username) => `<button class="linklike who" data-prof="${esc(username)}">${esc(profileOf(username).name)}</button>`;
+const avatarLink = (username, size = "") => `<button class="av-btn" data-prof="${esc(username)}" aria-label="Profil ${esc(profileOf(username).name)}">${avatar(username, size)}</button>`;
+
+const feedSeenKey = () => `feedSeen:${(ui.settings.user || {}).username || ""}`;
+function feedSeen() { try { return localStorage.getItem(feedSeenKey()) || ""; } catch { return ""; } }
+function markFeedSeen(at) { try { if (at && at > feedSeen()) localStorage.setItem(feedSeenKey(), at); } catch { /* abaikan */ } }
+const feedHasNew = () => !!(ui.data && ui.data.feedLatest && ui.data.feedLatest > feedSeen() && currentPage() !== "feed");
+
+async function loadFeed({ more = false, by = "" } = {}) {
+  const key = by ? `p:${by}` : "all";
+  const cur = (ui.feeds ||= {})[key] || { items: [], more: false };
+  if (cur.loading) return;
+  cur.loading = true; cur.error = "";
+  ui.feeds[key] = cur;
+  try {
+    const q = new URLSearchParams();
+    if (by) q.set("by", by);
+    if (more && cur.items.length) q.set("before", cur.items[cur.items.length - 1].at);
+    const r = await api(`/api/feed${q.toString() ? "?" + q : ""}`);
+    cur.items = more ? cur.items.concat(r.items) : r.items;
+    cur.more = r.more;
+    if (!by && !more && r.latest) { markFeedSeen(r.latest); if (ui.data) ui.data.feedLatest = r.latest; }
+  } catch (e) { cur.error = e.message; }
+  cur.loading = false;
+  if (["feed", "profile"].includes(currentPage())) render();
+}
+
+// Ganti satu item di semua daftar yang sedang dimuat.
+function feedReplace(item, removedId) {
+  for (const f of Object.values(ui.feeds || {})) {
+    if (removedId) f.items = f.items.filter((x) => x.id !== removedId);
+    else f.items = f.items.map((x) => (x.id === item.id ? item : x));
+  }
+}
+
+async function loadFeedImages() {
+  const cache = (ui.feedImgs ||= {});
+  for (const el of document.querySelectorAll("img[data-feedimg]")) {
+    const id = el.dataset.feedimg;
+    if (cache[id]) { el.src = cache[id]; continue; }
+    if (cache[id] === false) continue;
+    cache[id] = false;
+    api(`/api/feed/image?id=${encodeURIComponent(id)}`).then((r) => { cache[id] = r.image; document.querySelectorAll(`img[data-feedimg="${CSS.escape(id)}"]`).forEach((x) => { x.src = r.image; }); }).catch(() => { delete cache[id]; });
+  }
+  const covers = (ui.covers ||= {});
+  for (const el of document.querySelectorAll("[data-cover]")) {
+    const u = el.dataset.cover, ver = el.dataset.ver;
+    const k = `${u}:${ver}`;
+    if (covers[k]) { el.style.backgroundImage = `url("${covers[k]}")`; continue; }
+    if (covers[k] === false) continue;
+    covers[k] = false;
+    api(`/api/profile/cover?u=${encodeURIComponent(u)}`).then((r) => { covers[k] = r.image; document.querySelectorAll(`[data-cover="${CSS.escape(u)}"]`).forEach((x) => { x.style.backgroundImage = `url("${r.image}")`; }); }).catch(() => { delete covers[k]; });
+  }
+}
+
+// Foto postingan: sisi terpanjang 1600 px, JPEG, di bawah ~420 KB.
+async function postImage(file, maxSide = 1600, maxLen = 420 * 1024) {
+  const bmp = await createImageBitmap(file);
+  let scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+  for (let tries = 0; tries < 4; tries++) {
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    for (const q of [0.82, 0.7, 0.58]) {
+      const url = c.toDataURL("image/jpeg", q);
+      if (url.length < maxLen) return { url, w: c.width, h: c.height };
+    }
+    scale *= 0.75;
+  }
+  throw new Error("Foto terlalu besar. Coba foto lain.");
+}
+// Sampul profil: dipotong 3:1, lebar 1500 px.
+async function coverImage(file) {
+  const bmp = await createImageBitmap(file);
+  const w = bmp.width, h = Math.min(bmp.height, Math.round(bmp.width / 3));
+  const cw = Math.min(1500, w), ch = Math.round(cw / 3);
+  const c = document.createElement("canvas");
+  c.width = cw; c.height = ch;
+  const sw = Math.min(w, Math.round(bmp.height * 3)), sh = Math.round(sw / 3);
+  c.getContext("2d").drawImage(bmp, (w - sw) / 2, (bmp.height - sh) / 2, sw, sh, 0, 0, cw, ch);
+  for (const q of [0.82, 0.7, 0.58, 0.45]) {
+    const url = c.toDataURL("image/jpeg", q);
+    if (url.length < 330 * 1024) return url;
+  }
+  void h;
+  throw new Error("Foto sampul terlalu besar. Coba foto lain.");
+}
+
+function linkify(text) {
+  return esc(text).replace(/https?:\/\/[^\s<]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener">${u.length > 60 ? u.slice(0, 57) + "…" : u}</a>`);
+}
+
+function postCard(p) {
+  const me = ui.settings.user.username;
+  const canDel = p.by === me || isLead();
+  const editing = ui.form.editPost === p.id;
+  const total = Object.values(p.reactions).reduce((a, b) => a + b, 0);
+  const showAll = (ui.openComments || {})[p.id];
+  const comments = showAll ? p.comments : p.comments.slice(-3);
+  const auto = p.kind === "auto";
+  const head = auto
+    ? `<div class="post-head auto">${avatarLink(p.by, "sm")}<span class="auto-ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${AUTO_ICON[p.icon] || AUTO_ICON.info}</svg></span>
+        <p class="auto-text">${nameLink(p.by)} ${esc(p.text)}</p><time title="${esc(new Date(p.at).toLocaleString("id-ID"))}">${esc(ago(p.at))}</time>
+        ${canDel ? `<button class="icon-btn sm" data-pdel="${p.id}" aria-label="Hapus dari timeline" title="Hapus">×</button>` : ""}</div>`
+    : `<div class="post-head">${avatarLink(p.by)}<div class="post-who">${nameLink(p.by)}<small>${esc(profileOf(p.by).title)} · <time title="${esc(new Date(p.at).toLocaleString("id-ID"))}">${esc(ago(p.at))}</time>${p.editedAt ? " · diubah" : ""}</small></div>
+        <div class="post-tools">${p.by === me && !editing ? `<button class="linklike" data-pedit="${p.id}">Ubah</button>` : ""}${canDel ? `<button class="linklike" data-pdel="${p.id}">Hapus</button>` : ""}</div></div>`;
+  const body = auto ? "" : editing
+    ? `<textarea id="editText" rows="3" maxlength="2000">${esc(ui.form.editText ?? p.text)}</textarea>
+       <div class="btns"><button class="btn inline" data-psave="${p.id}">Simpan</button><button class="btn secondary inline" data-act="cancelEdit">Batal</button></div>`
+    : `${p.text ? `<p class="post-text">${linkify(p.text)}</p>` : ""}
+       ${p.image ? `<button class="post-img" data-zoomimg="${p.id}" aria-label="Perbesar foto"><img data-feedimg="${p.id}" alt="Foto dari ${esc(profileOf(p.by).name)}" width="${p.image.w}" height="${p.image.h}"></button>` : ""}`;
+  const whoReacted = (key) => Object.entries(p.reactors).filter(([, r]) => r === key).map(([u]) => profileOf(u).short).join(", ");
+  return `<article class="post glass${auto ? " is-auto" : ""}" data-post="${p.id}">
+    ${head}${body}
+    <div class="post-react" role="group" aria-label="Reaksi">
+      ${REACTS.map(([k, e, l]) => `<button class="react${p.mine === k ? " on" : ""}" data-react="${k}" data-pid="${p.id}" aria-pressed="${p.mine === k}" title="${esc(l)}${p.reactions[k] ? ": " + esc(whoReacted(k)) : ""}"><span aria-hidden="true">${e}</span>${p.reactions[k] ? `<b>${p.reactions[k]}</b>` : `<span class="sr">${esc(l)}</span>`}</button>`).join("")}
+      <span class="react-sum">${total ? `${total} reaksi` : ""}${total && p.comments.length ? " · " : ""}${p.comments.length ? `${p.comments.length} komentar` : ""}</span>
+    </div>
+    ${p.comments.length > 3 && !showAll ? `<button class="linklike more-cm" data-allcm="${p.id}">Lihat ${p.comments.length - 3} komentar sebelumnya</button>` : ""}
+    ${comments.length ? `<ul class="comments">${comments.map((c) => `<li>${avatarLink(c.by, "sm")}<div class="cm-bubble">${nameLink(c.by)}<p>${linkify(c.text)}</p></div>
+      <small>${esc(ago(c.at))}${c.by === me || isLead() ? ` · <button class="linklike" data-cdel="${c.id}" data-pid="${p.id}">Hapus</button>` : ""}</small></li>`).join("")}</ul>` : ""}
+    <div class="cm-new">${avatar(me, "sm")}<input type="text" data-cm="${p.id}" maxlength="500" placeholder="Tulis komentar…" aria-label="Tulis komentar" value="${esc((ui.form.cm || {})[p.id] || "")}"><button class="btn inline" data-cmsend="${p.id}">Kirim</button></div>
+  </article>`;
+}
+
+function feedList(key) {
+  const f = (ui.feeds || {})[key];
+  if (!f || (!f.items.length && f.loading)) return `<p class="empty">Memuat timeline…</p>`;
+  if (f.error && !f.items.length) return `<p class="msg err">${esc(f.error)}</p><button class="btn secondary" data-act="feedRetry">Coba lagi</button>`;
+  if (!f.items.length) return `<p class="all-clear">Belum ada aktivitas di sini.</p>`;
+  return f.items.map(postCard).join("") + (f.more ? `<button class="btn secondary" data-act="feedMore" ${f.loading ? "disabled" : ""}>${f.loading ? "Memuat…" : "Muat lebih lama"}</button>` : "");
+}
+
+function composer() {
+  const me = ui.settings.user.username;
+  const f = ui.form;
+  const first = profileOf(me).short;
+  return `<section class="composer glass">
+    <div class="comp-row">${avatar(me)}<textarea id="postText" rows="${f.postText ? 3 : 2}" maxlength="2000" placeholder="Apa yang lagi dikerjakan, ${esc(first)}?" aria-label="Tulis postingan">${esc(f.postText || "")}</textarea></div>
+    ${f.postImg ? `<div class="comp-preview"><img src="${f.postImg.url}" alt="Pratinjau foto"><button class="icon-btn sm" data-act="dropImg" aria-label="Hapus foto">×</button></div>` : ""}
+    <div class="comp-actions">
+      <label class="btn secondary inline comp-photo"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${AUTO_ICON.design}</svg>Foto<input type="file" id="postFile" accept="image/png,image/jpeg,image/webp" hidden></label>
+      ${f.postMsg ? `<span class="msg-inline ${f.postMsgType}" role="status">${esc(f.postMsg)}</span>` : ""}
+      <button class="btn inline" data-act="sendPost" ${f.posting ? "disabled" : ""}>${f.posting ? "Mengirim…" : "Posting"}</button>
+    </div>
+  </section>`;
+}
+
+function feedView() {
+  if (!(ui.feeds || {}).all) loadFeed();
+  const team = ((ui.data && ui.data.team) || []);
+  return `<div class="feed-layout"><div class="feed-wrap">${composer()}<div class="feed">${feedList("all")}</div></div>
+    <aside class="feed-side glass" aria-label="Tim creative"><h3>Tim creative</h3>
+      ${team.map((t) => `<button class="side-person" data-prof="${esc(t.username)}">${avatar(t.username, "sm")}<span><b>${esc(profileOf(t.username).name)}</b><small>${esc(profileOf(t.username).title)}</small></span></button>`).join("")}
+    </aside></div>`;
+}
+
+function teamView() {
+  const team = ((ui.data && ui.data.team) || []).slice().sort((a, b) => (a.member === "ray" ? -1 : b.member === "ray" ? 1 : a.name.localeCompare(b.name)));
+  return `<div class="team-grid">${team.map((t) => {
+    const p = profileOf(t.username);
+    return `<button class="team-card glass" data-prof="${esc(t.username)}">
+      <span class="cover sm${p.coverVer ? " has" : ""}" ${p.coverVer ? `data-cover="${esc(t.username)}" data-ver="${p.coverVer}"` : ""}></span>
+      ${avatar(t.username, "lg")}
+      <b>${esc(p.name)}</b><small>${esc(p.title)}</small>
+      ${p.bio ? `<span class="team-bio">${esc(p.bio)}</span>` : ""}
+    </button>`;
+  }).join("")}</div>`;
+}
+
+function profileView() {
+  const u = ui.profileUser || ui.settings.user.username;
+  const p = profileOf(u);
+  const mine = u === ui.settings.user.username;
+  const f = ui.form;
+  if (!(ui.feeds || {})[`p:${u}`]) loadFeed({ by: u });
+  const editor = f.editProfile ? `<div class="prof-edit glass">
+      <label for="pTitle">Jabatan</label><input type="text" id="pTitle" maxlength="60" value="${esc(f.pTitle ?? p.title)}">
+      <label for="pBio">Bio</label><textarea id="pBio" rows="3" maxlength="300" placeholder="Ceritakan sedikit tentang kamu">${esc(f.pBio ?? p.bio)}</textarea>
+      <div class="btns"><label class="btn secondary inline">${f.coverBusy ? "Mengunggah…" : "Ganti foto sampul"}<input type="file" id="coverFile" accept="image/png,image/jpeg,image/webp" hidden></label>
+        ${p.coverVer ? `<button class="btn secondary inline" data-act="coverDel">Hapus sampul</button>` : ""}
+        <button class="btn secondary inline" data-act="settings">Ganti foto profil</button></div>
+      <div class="btns"><button class="btn inline" data-act="saveProfile" ${f.profBusy ? "disabled" : ""}>${f.profBusy ? "Menyimpan…" : "Simpan profil"}</button><button class="btn secondary inline" data-act="cancelProfile">Batal</button></div>
+      ${f.profMsg ? `<p class="msg ${f.profMsgType}" role="status">${esc(f.profMsg)}</p>` : ""}
+    </div>` : "";
+  return `<div class="profile">
+    <section class="prof-head glass">
+      <div class="cover${p.coverVer ? " has" : ""}" ${p.coverVer ? `data-cover="${esc(u)}" data-ver="${p.coverVer}"` : ""}></div>
+      <div class="prof-id">${avatar(u, "xl")}
+        <div class="prof-name"><h2>${esc(p.name)}</h2><p>${esc(p.title)}</p></div>
+        ${mine && !f.editProfile ? `<button class="btn secondary inline" data-act="editProfile">Edit profil</button>` : ""}
+      </div>
+      ${p.bio ? `<p class="prof-bio">${esc(p.bio)}</p>` : mine ? `<p class="prof-bio hint">Belum ada bio. Klik Edit profil untuk menambahkan.</p>` : ""}
+    </section>
+    ${editor}
+    <h2 class="feed-title">Aktivitas ${esc(p.short)}</h2>
+    <div class="feed">${feedList(`p:${u}`)}</div>
+  </div>`;
+}
+
+function bindFeedCommon() {
+  bindCommon();
+  loadFeedImages();
+  const key = currentPage() === "profile" ? `p:${ui.profileUser || ui.settings.user.username}` : "all";
+  const by = key.startsWith("p:") ? key.slice(2) : "";
+  document.querySelectorAll("[data-prof]").forEach((b) => b.addEventListener("click", () => openProfile(b.dataset.prof)));
+  on("feedRetry", () => { delete ui.feeds[key]; loadFeed({ by }); render(); });
+  on("feedMore", () => loadFeed({ more: true, by }));
+  const run = async (fn) => { try { const r = await fn(); if (r.deleted) feedReplace(null, r.deleted); else feedReplace(r.item); } catch (e) { alertMsg(e.message); } render(); };
+  document.querySelectorAll("[data-react]").forEach((b) => b.addEventListener("click", () => run(() => api("/api/feed/react", { id: b.dataset.pid, reaction: b.dataset.react }))));
+  document.querySelectorAll("[data-pdel]").forEach((b) => b.addEventListener("click", () => { if (confirmInline(b, "Yakin hapus?")) run(() => api("/api/feed/delete", { id: b.dataset.pdel })); }));
+  document.querySelectorAll("[data-cdel]").forEach((b) => b.addEventListener("click", () => { if (confirmInline(b, "Yakin?")) run(() => api("/api/feed/delete", { id: b.dataset.pid, commentId: b.dataset.cdel })); }));
+  document.querySelectorAll("[data-allcm]").forEach((b) => b.addEventListener("click", () => { (ui.openComments ||= {})[b.dataset.allcm] = true; render(); }));
+  document.querySelectorAll("[data-pedit]").forEach((b) => b.addEventListener("click", () => { ui.form.editPost = b.dataset.pedit; ui.form.editText = undefined; render(); }));
+  on("cancelEdit", () => { ui.form.editPost = ""; render(); });
+  const et = $("editText");
+  if (et) { et.addEventListener("input", () => { ui.form.editText = et.value; }); et.focus(); }
+  document.querySelectorAll("[data-psave]").forEach((b) => b.addEventListener("click", () => { const text = ui.form.editText ?? $("editText").value; ui.form.editPost = ""; run(() => api("/api/feed/edit", { id: b.dataset.psave, text })); }));
+  document.querySelectorAll("[data-cm]").forEach((inp) => {
+    inp.addEventListener("input", () => { (ui.form.cm ||= {})[inp.dataset.cm] = inp.value; });
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); sendComment(inp.dataset.cm); } });
+  });
+  document.querySelectorAll("[data-cmsend]").forEach((b) => b.addEventListener("click", () => sendComment(b.dataset.cmsend)));
+  async function sendComment(pid) {
+    const text = ((ui.form.cm || {})[pid] || "").trim();
+    if (!text) return;
+    try { const r = await api("/api/feed/comment", { id: pid, text }); ui.form.cm[pid] = ""; (ui.openComments ||= {})[pid] = true; feedReplace(r.item); }
+    catch (e) { alertMsg(e.message); }
+    render();
+    const again = document.querySelector(`[data-cm="${CSS.escape(pid)}"]`);
+    if (again) again.focus();
+  }
+  document.querySelectorAll("[data-zoomimg]").forEach((b) => b.addEventListener("click", () => {
+    const src = (ui.feedImgs || {})[b.dataset.zoomimg];
+    if (src) showZoom(src);
+  }));
+}
+
+// Pesan singkat di atas daftar, tanpa dialog bawaan browser.
+function alertMsg(text) { ui.feedErr = text; setTimeout(() => { ui.feedErr = ""; render(); }, 5000); }
+// Konfirmasi dua klik: klik pertama mengubah tombol jadi "Yakin?", klik kedua menjalankan.
+function confirmInline(btn, label) {
+  if (btn.dataset.armed) return true;
+  const orig = btn.textContent;
+  btn.dataset.armed = "1"; btn.textContent = label; btn.classList.add("danger");
+  setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = orig; btn.classList.remove("danger"); } }, 3000);
+  return false;
+}
+function showZoom(src) {
+  const z = document.createElement("div");
+  z.className = "zoom"; z.tabIndex = -1;
+  z.innerHTML = `<img src="${src}" alt="Foto postingan">`;
+  const close = () => { z.remove(); document.removeEventListener("keydown", esc2); };
+  const esc2 = (e) => { if (e.key === "Escape") close(); };
+  z.addEventListener("click", close); document.addEventListener("keydown", esc2);
+  document.body.appendChild(z); z.focus();
+}
+
+function bindFeed() {
+  bindFeedCommon();
+  const t = $("postText");
+  if (t) t.addEventListener("input", () => { ui.form.postText = t.value; if (t.rows < 3 && t.value) t.rows = 3; });
+  const file = $("postFile");
+  if (file) file.addEventListener("change", async () => {
+    const f0 = file.files && file.files[0];
+    if (!f0) return;
+    try { ui.form.postImg = await postImage(f0); ui.form.postMsg = ""; } catch (e) { ui.form.postMsg = e.message; ui.form.postMsgType = "err"; }
+    render();
+  });
+  on("dropImg", () => { ui.form.postImg = null; render(); });
+  on("sendPost", async () => {
+    const text = (ui.form.postText || "").trim();
+    if (!text && !ui.form.postImg) { ui.form.postMsg = "Tulis sesuatu atau pilih foto dulu."; ui.form.postMsgType = "err"; return render(); }
+    ui.form.posting = true; render();
+    try {
+      const img = ui.form.postImg;
+      const r = await api("/api/feed/post", { text, ...(img ? { image: img.url, w: img.w, h: img.h } : {}) });
+      if (img) (ui.feedImgs ||= {})[r.item.id] = img.url;
+      ui.feeds.all.items.unshift(r.item);
+      markFeedSeen(r.item.at);
+      ui.form = {};
+    } catch (e) { ui.form.posting = false; ui.form.postMsg = e.message; ui.form.postMsgType = "err"; }
+    render();
+  });
+}
+
+function bindTeam() {
+  bindCommon();
+  loadFeedImages();
+  document.querySelectorAll("[data-prof]").forEach((b) => b.addEventListener("click", () => openProfile(b.dataset.prof)));
+}
+
+function bindProfile() {
+  bindFeedCommon();
+  const f = ui.form;
+  on("editProfile", () => { ui.form = { editProfile: true }; render(); });
+  on("cancelProfile", () => { ui.form = {}; render(); });
+  const t = $("pTitle"), b = $("pBio");
+  if (t) t.addEventListener("input", () => { f.pTitle = t.value; });
+  if (b) b.addEventListener("input", () => { f.pBio = b.value; });
+  const saveProf = async (patch, msg) => {
+    try {
+      const r = await api("/api/me/profile", patch);
+      const team = (ui.data && ui.data.team) || [];
+      const i = team.findIndex((x) => x.username === r.profile.username);
+      if (i >= 0) team[i] = { ...team[i], ...r.profile };
+      return r;
+    } catch (e) { f.profMsg = e.message; f.profMsgType = "err"; throw e; }
+    finally { void msg; }
+  };
+  on("saveProfile", async () => {
+    f.profBusy = true; render();
+    try { await saveProf({ title: f.pTitle ?? profileOf(ui.settings.user.username).title, bio: f.pBio ?? profileOf(ui.settings.user.username).bio }); ui.form = {}; } catch { f.profBusy = false; }
+    render();
+  });
+  const cf = $("coverFile");
+  if (cf) cf.addEventListener("change", async () => {
+    const f0 = cf.files && cf.files[0];
+    if (!f0) return;
+    f.coverBusy = true; render();
+    try { const cover = await coverImage(f0); const r = await saveProf({ cover }); (ui.covers ||= {})[`${r.profile.username}:${r.profile.coverVer}`] = cover; f.profMsg = "Foto sampul diganti."; f.profMsgType = "ok"; }
+    catch (e) { f.profMsg = e.message; f.profMsgType = "err"; }
+    f.coverBusy = false; render();
+  });
+  on("coverDel", async () => { try { await saveProf({ cover: "" }); f.profMsg = "Foto sampul dihapus."; f.profMsgType = "ok"; } catch { /* pesan sudah diisi */ } render(); });
+}
+
+function openProfile(username) {
+  ui.profileUser = username;
+  goPage("profile");
 }
 
 // ---------- Login ----------
