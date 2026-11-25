@@ -93,7 +93,13 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(Promise.all([refresh(env, { force: true }).catch(() => {}), googleRefreshAll(env), igSync(env).catch(() => {})]));
+    // Berurutan: Lark dulu, lalu Google, lalu Instagram dengan jatah panggilan terbatas,
+    // supaya batas 50 subrequest paket gratis tidak memutus pembaruan sheet.
+    ctx.waitUntil((async () => {
+      await refresh(env, { force: true }).catch(() => {});
+      await googleRefreshAll(env).catch(() => {});
+      await igSync(env).catch(() => {});
+    })());
   },
 };
 
@@ -1273,7 +1279,10 @@ const IG_DEFAULT_IDS = { AAB: "17841471637263858", NUSANTARA: "17841474840408535
 const isFbToken = (token) => /^EAA/.test(token);
 const IG_VER = "v25.0";
 export const IG_ACCOUNTS = ["AAB", "NUSANTARA"];
-const IG_MEDIA_PER_RUN = 6;
+const IG_MEDIA_PER_RUN = 12;
+// Jatah panggilan Instagram per akun per jalan (paket gratis: 50 subrequest per jalan, dibagi dengan Lark dan Google).
+const IG_BUDGET_CRON = 9;
+const IG_BUDGET_MANUAL = 20;
 const IG_PROFILE_EVERY_MS = 3 * 3600 * 1000;
 const IG_MEDIA_FRESH_MS = 2 * 3600 * 1000;
 const IG_KEEP_DAYS = 90;
@@ -1282,6 +1291,11 @@ const IG_SHEET_EVERY_MS = 60 * 60 * 1000;
 
 // t: { token, kind: "ig" | "fb", igId }. Untuk token fb, "me" dan "me/..." diarahkan ke ID akun IG.
 async function ig(path, t, params = {}) {
+  if (t.budget && t.budget.left-- <= 0) {
+    const e = fail("Instagram: jatah panggilan habis untuk jalan ini", 503);
+    e.budget = true;
+    throw e;
+  }
   const fb = t.kind === "fb";
   const p = fb && t.igId ? path.replace(/^me(?=\/|$)/, t.igId) : path;
   const u = new URL(`${fb ? FB_HOST : IG_HOST}/${p.startsWith("refresh_access_token") ? "" : IG_VER + "/"}${p}`);
@@ -1372,7 +1386,8 @@ async function igMediaInsights(t, m) {
   return out;
 }
 
-async function igSyncAccount(env, account, t, { force = false } = {}) {
+async function igSyncAccount(env, account, tok, { force = false } = {}) {
+  const t = { ...tok, budget: { left: force ? IG_BUDGET_MANUAL : IG_BUDGET_CRON } };
   const key = `ig:data:${account}`;
   const prev = (await env.STORE.get(key, "json")) || { account, daily: {}, media: [] };
   const data = JSON.parse(JSON.stringify(prev));
@@ -1422,14 +1437,15 @@ async function igSyncAccount(env, account, t, { force = false } = {}) {
   const queue = (data.media || [])
     .filter((m) => force || now - (m.insightsAt || 0) > IG_MEDIA_FRESH_MS)
     .sort((a, b) => (Date.parse(b.timestamp) >= week) - (Date.parse(a.timestamp) >= week) || (a.insightsAt || 0) - (b.insightsAt || 0))
-    .slice(0, force ? 10 : IG_MEDIA_PER_RUN);
+    .slice(0, force ? 20 : IG_MEDIA_PER_RUN);
   for (const m of queue) {
     try {
       const s = await igMediaInsights(t, m);
       Object.assign(m, { views: s.views ?? m.views, reach: s.reach ?? m.reach, likes: s.likes ?? m.likes, comments: s.comments ?? m.comments, shares: s.shares ?? m.shares, saved: s.saved ?? m.saved, insightsAt: now });
     } catch (e) {
+      if (e.budget) break; // jatah habis: sisanya dilanjutkan jalan berikutnya
+      if (e.igCode === 190) throw e; // token bermasalah: berhenti dan tampilkan error
       m.insightsAt = now; // jangan diulang terus kalau Instagram menolak satu konten
-      if (e.status === 409) break; // token bermasalah: berhenti
     }
   }
   data.updatedAt = now;

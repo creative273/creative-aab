@@ -43,6 +43,8 @@ const IG = {
   "tok-nus-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": { id: "1782", username: "nusantara.mcn", followers: 6452,
     media: [{ id: "m3", shortcode: "DgCOLLAB001", media_type: "VIDEO", media_product_type: "REELS", ago: 2 * 864e5, views: 800, reach: 700, likes: 10, comments: 1, shares: 0, saved: 0 }] },
 };
+IG["tok-big-gggggggggggggggggggggggggggggggggggggggggggg"] = { id: "1799", username: "nusantara.mcn", followers: 6452,
+  media: Array.from({ length: 30 }, (_, i) => ({ id: "b" + i, shortcode: "DgBIG" + String(i).padStart(6, "0"), media_type: i % 5 ? "VIDEO" : "CAROUSEL_ALBUM", media_product_type: i % 5 ? "REELS" : "FEED", ago: (1 + i * 0.7) * 864e5, views: 100 + i, reach: 90 + i, likes: i, comments: 1, shares: 0, saved: 0, broken: i === 2 })) };
 function igMock(u) {
   const tok = u.searchParams.get("access_token");
   igCalls.push(u.pathname);
@@ -59,6 +61,7 @@ function igMock(u) {
   const mm = path.match(/^(\w+)\/insights$/);
   if (mm) {
     const m = acc.media.find((x) => x.id === mm[1]);
+    if (m.broken) return new Response(JSON.stringify({ error: { message: "(#10) Media posted before business conversion", code: 10 } }), { status: 400 });
     const metrics = u.searchParams.get("metric").split(",");
     if (metrics.includes("views") && m.views === null) return new Response(JSON.stringify({ error: { message: "(#100) metric views not supported", code: 100 } }), { status: 400 });
     return ok({ data: metrics.map((k) => ({ name: k, period: "lifetime", values: [{ value: m[k] }] })) });
@@ -69,6 +72,7 @@ function igMock(u) {
 // Token Login Terpadu (EAA) lewat graph.facebook.com: diterjemahkan ke data IG tiruan di atas.
 const FB = {
   "EAAaab-ddddddddddddddddddddddddddddddddddddddddddddd": { ids: { "17841471637263858": "tok-aab-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, pages: [] },
+  "EAAbig-hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh": { ids: { "17841474840408535": "tok-big-gggggggggggggggggggggggggggggggggggggggggggg" }, pages: [] },
   "EAApage-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee": { ids: { "555": "tok-nus-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, pages: [{ id: "p1", instagram_business_account: { id: "555", username: "nusantara.mcn" } }] },
 };
 const fbCalls = [];
@@ -448,5 +452,25 @@ await worker.scheduled({}, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.equal(igCalls.filter((p) => p === "/refresh_access_token").length, refBefore);
 assert.equal(JSON.parse(kv.get("ig:accounts")).AAB.error || "", "");
+
+// 18. Banyak konten: jatah panggilan per jalan dipatuhi, satu konten bermasalah tidak menghentikan yang lain
+assert.equal((await call("POST", "/api/ig/disconnect", { account: "NUSANTARA" })).status, 200);
+r = await call("POST", "/api/ig/connect", { account: "NUSANTARA", token: "EAAbig-hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh" });
+assert.equal(r.status, 200, JSON.stringify(r.data));
+let nus = JSON.parse(kv.get("ig:data:NUSANTARA"));
+const doneAfterConnect = nus.media.filter((m) => m.views !== null).length;
+assert.ok(doneAfterConnect >= 12, "connect langsung mengisi banyak konten: " + doneAfterConnect);
+assert.ok(nus.media.find((m) => m.id === "b2").views === null, "konten bermasalah dilewati");
+for (let run = 0; run < 4; run++) {
+  // anggap insight sudah basi supaya cron mengambil ulang
+  const d = JSON.parse(kv.get("ig:data:NUSANTARA")); d.media.forEach((m) => { if (m.views === null) m.insightsAt = 0; }); kv.set("ig:data:NUSANTARA", JSON.stringify(d));
+  const n0 = fbCalls.filter((x) => x.includes("/b")).length;
+  await worker.scheduled({}, env, { waitUntil: (p) => p });
+  await new Promise((res) => setTimeout(res, 50));
+  const used = fbCalls.filter((x) => x.includes("/b")).length - n0;
+  assert.ok(used <= 9, "jatah per jalan: " + used);
+}
+nus = JSON.parse(kv.get("ig:data:NUSANTARA"));
+assert.equal(nus.media.filter((m) => m.views === null).length, 1, "semua konten terisi kecuali yang ditolak Instagram");
 
 console.log("SEMUA TES LULUS. Panggilan Lark tiruan:", calls.length);
