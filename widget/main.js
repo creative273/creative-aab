@@ -2,12 +2,23 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, screen, shell, nativeImage, net } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 
 app.setAppUserModelId("com.agensianakbangsa.creative");
 
 const SETTINGS_FILE = () => path.join(app.getPath("userData"), "settings.json");
 const DEFAULT_SERVER = "https://creative-aab.creative-545.workers.dev";
-const DEFAULTS = { serverUrl: DEFAULT_SERVER, token: "", user: null, seen: [], seenInit: false, seenUser: "", pinned: false, openAtLogin: true };
+const DEFAULTS = {
+  serverUrl: DEFAULT_SERVER, token: "", user: null, seen: [], seenInit: false, seenUser: "", pinned: false, openAtLogin: true,
+  // Tampilan (v1.3), berlaku per laptop
+  mode: "compact", startMode: "compact", fullBounds: null,
+  accent: "#5B9BE6", glass: 0.55, nativeGlass: true, theme: "dark",
+};
+
+// Efek kaca asli (acrylic) hanya ada di Windows 11 22H2 (build 22621) ke atas.
+const GLASS_SUPPORTED = process.platform === "win32" && Number((os.release().split(".")[2]) || 0) >= 22621;
+const COMPACT = { w: 400, h: 640, minW: 360, minH: 420 };
+const FULL = { w: 1360, h: 860, minW: 1000, minH: 640 };
 
 // Update otomatis dari GitHub Releases (creative273/creative-aab). Hanya jalan di versi terpasang (installer).
 let autoUpdater = null;
@@ -45,28 +56,82 @@ function placeBottomRight(w, h, margin = 16) {
   return { x: workArea.x + workArea.width - w - margin, y: workArea.y + workArea.height - h - margin };
 }
 
+function fullBounds(s) {
+  const { workArea } = screen.getPrimaryDisplay();
+  const b = s.fullBounds;
+  if (b && b.width >= FULL.minW && b.height >= FULL.minH) return b;
+  const w = Math.min(FULL.w, workArea.width - 40);
+  const h = Math.min(FULL.h, workArea.height - 40);
+  return { x: workArea.x + Math.round((workArea.width - w) / 2), y: workArea.y + Math.round((workArea.height - h) / 2), width: w, height: h };
+}
+
+function compactBounds() {
+  const pos = placeBottomRight(COMPACT.w, COMPACT.h);
+  return { ...pos, width: COMPACT.w, height: COMPACT.h };
+}
+
+function useGlass(s) {
+  return GLASS_SUPPORTED && s.nativeGlass !== false;
+}
+
+function applyLook(s) {
+  if (!win) return;
+  const glass = useGlass(s);
+  try { win.setBackgroundMaterial(glass ? "acrylic" : "none"); } catch { /* Windows lama */ }
+  win.setBackgroundColor(glass ? "#00000000" : s.theme === "light" ? "#EEF2F8" : "#08111D");
+}
+
+function applyMode(mode) {
+  if (!win) return;
+  const s = loadSettings();
+  if (mode === "full") {
+    win.setAlwaysOnTop(false);
+    win.setMinimumSize(FULL.minW, FULL.minH);
+    win.setBounds(fullBounds(s));
+  } else {
+    if (win.isMaximized()) win.unmaximize();
+    win.setMinimumSize(COMPACT.minW, COMPACT.minH);
+    win.setBounds(compactBounds());
+    win.setAlwaysOnTop(!!s.pinned);
+  }
+  saveSettings({ mode });
+}
+
 function createWindow() {
   const s = loadSettings();
-  const W = 400;
-  const H = 640;
-  const pos = placeBottomRight(W, H);
+  const mode = s.startMode === "full" ? "full" : "compact";
+  saveSettings({ mode });
+  const b = mode === "full" ? fullBounds(s) : compactBounds();
+  const glass = useGlass(s);
   win = new BrowserWindow({
-    width: W,
-    height: H,
-    minWidth: 360,
-    minHeight: 420,
-    x: pos.x,
-    y: pos.y,
+    width: b.width,
+    height: b.height,
+    minWidth: mode === "full" ? FULL.minW : COMPACT.minW,
+    minHeight: mode === "full" ? FULL.minH : COMPACT.minH,
+    x: b.x,
+    y: b.y,
     frame: false,
     show: false,
-    alwaysOnTop: !!s.pinned,
-    backgroundColor: "#08111D",
+    alwaysOnTop: mode === "compact" && !!s.pinned,
+    backgroundColor: glass ? "#00000000" : s.theme === "light" ? "#EEF2F8" : "#08111D",
+    ...(glass ? { backgroundMaterial: "acrylic" } : {}),
     icon: path.join(__dirname, "assets", "icon256.png"),
     title: "Creative AAB",
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
   win.once("ready-to-show", () => win.show());
+  // Simpan ukuran jendela penuh supaya dibuka lagi di posisi yang sama.
+  let t = null;
+  const remember = () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      if (!win || win.isDestroyed() || win.isMaximized() || win.isMinimized()) return;
+      if (loadSettings().mode === "full") saveSettings({ fullBounds: win.getBounds() });
+    }, 500);
+  };
+  win.on("resize", remember);
+  win.on("move", remember);
   win.on("close", (e) => {
     if (!quitting) {
       e.preventDefault();
@@ -117,10 +182,11 @@ function showPopup(data) {
     skipTaskbar: true,
     focusable: true,
     show: false,
-    backgroundColor: "#0E1A2B",
+    backgroundColor: loadSettings().theme === "light" ? "#FFFFFF" : "#0E1A2B",
     webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
-  popup.loadFile(path.join(__dirname, "renderer", "popup.html"), { query: { data: JSON.stringify(data) } });
+  const look = loadSettings();
+  popup.loadFile(path.join(__dirname, "renderer", "popup.html"), { query: { data: JSON.stringify({ ...data, accent: look.accent, theme: look.theme }) } });
   popup.once("ready-to-show", () => popup.showInactive());
   setTimeout(() => popup && !popup.isDestroyed() && popup.close(), 15000);
 }
@@ -262,6 +328,10 @@ ipcMain.handle("popup:open", (_e, id) => {
 });
 ipcMain.handle("popup:close", () => popup && !popup.isDestroyed() && popup.close());
 ipcMain.handle("window:hide", () => win && win.hide());
+ipcMain.handle("window:mode", (_e, mode) => { applyMode(mode === "full" ? "full" : "compact"); return loadSettings(); });
+ipcMain.handle("window:maximize", () => { if (!win) return; win.isMaximized() ? win.unmaximize() : win.maximize(); });
+ipcMain.handle("window:look", () => { applyLook(loadSettings()); return { glassSupported: GLASS_SUPPORTED, glass: useGlass(loadSettings()) }; });
+ipcMain.handle("window:info", () => ({ glassSupported: GLASS_SUPPORTED, glass: useGlass(loadSettings()), platform: process.platform }));
 ipcMain.handle("open-external", (_e, url) => {
   if (/^https?:\/\//.test(url)) shell.openExternal(url);
 });

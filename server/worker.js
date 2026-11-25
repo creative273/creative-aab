@@ -50,6 +50,8 @@ export default {
         "GET /api/state": ["all", () => fullState(env, me)],
         "POST /api/refresh": ["lead", () => refreshAll(env, me)],
         "GET /api/me": ["all", () => ({ ok: true, user: publicUser(me) })],
+        "POST /api/me/photo": ["all", () => setPhoto(env, me, body)],
+        "GET /api/photos": ["all", () => getPhotos(env)],
         "POST /api/password": ["all", () => changeOwnPassword(env, me, body)],
         "POST /api/request/done": ["all", () => requestDone(env, body, me)],
         "POST /api/kpi/content/preview": ["content", () => contentPreview(env, body)],
@@ -218,6 +220,7 @@ async function deleteAccount(env, body) {
   const accounts = await getAccounts(env);
   if (!accounts[username]) throw fail("Akun tidak ditemukan.");
   delete accounts[username];
+  await env.STORE.delete(`photo:${username}`);
   await putAccounts(env, accounts);
   return { ok: true };
 }
@@ -279,6 +282,34 @@ const b64url = (u8) => bufToB64(u8).replace(/\+/g, "-").replace(/\//g, "_").repl
 function forUser(state, me) {
   if (!state || !Array.isArray(state.requests) || MEMBERS[me.member]?.block === "lead") return state;
   return { ...state, requests: state.requests.filter((r) => r.approved) };
+}
+
+// ---------- Foto profil ----------
+// Disimpan per akun di KV (bukan di objek akun) supaya data akun yang dibaca tiap request tetap kecil.
+const PHOTO_MAX = 80 * 1024;
+
+async function setPhoto(env, me, body) {
+  const img = String(body.image || "");
+  const accounts = await getAccounts(env);
+  const acc = accounts[me.username];
+  if (!img) {
+    await env.STORE.delete(`photo:${me.username}`);
+    acc.photoVer = 0;
+  } else {
+    if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(img)) throw fail("Format foto tidak dikenali. Pakai JPG atau PNG.");
+    if (img.length > PHOTO_MAX) throw fail("Foto terlalu besar setelah dikompres. Coba foto lain.");
+    await env.STORE.put(`photo:${me.username}`, img);
+    acc.photoVer = Date.now();
+  }
+  await putAccounts(env, accounts);
+  return { ok: true, photoVer: acc.photoVer };
+}
+
+async function getPhotos(env) {
+  const accounts = Object.values(await getAccounts(env)).filter((a) => a.photoVer);
+  const photos = {};
+  await Promise.all(accounts.map(async (a) => { photos[a.username] = { ver: a.photoVer, image: await env.STORE.get(`photo:${a.username}`) }; }));
+  return { ok: true, photos };
 }
 
 // ---------- Aktivitas dan dashboard Ray ----------
@@ -450,9 +481,14 @@ async function refresh(env, { force }) {
   if (!force && cache && Date.now() - Date.parse(cache.fetchedAt) < REFRESH_COOLDOWN_MS) {
     return { ok: true, ...cache, note: "Data baru diambil kurang dari 1 menit lalu." };
   }
-  const [reqRows, summary] = await readRanges(env, cfg, [
+  // Satu panggilan Lark: request, baris summary, dan kolom tanggal tiap blok (untuk grafik harian).
+  const [reqRows, summary, cDates, dDates, vDates, aRows] = await readRanges(env, cfg, [
     `${cfg.requestId}!${REQUEST_RANGE}`,
     `${cfg.reportId}!A4:AK4`,
+    `${cfg.reportId}!B${FIRST_ROW}:B${LAST_ROW}`,
+    `${cfg.reportId}!O${FIRST_ROW}:O${LAST_ROW}`,
+    `${cfg.reportId}!T${FIRST_ROW}:T${LAST_ROW}`,
+    `${cfg.reportId}!AI${FIRST_ROW}:AK${LAST_ROW}`,
   ]);
   const requests = parseRequests(reqRows);
   const s = summary[0] || [];
@@ -464,7 +500,8 @@ async function refresh(env, { force }) {
     aigcProduksi: cfg.aigcReady ? num("AJ") : null,
     aigcUpload: cfg.aigcReady ? num("AK") : null,
   };
-  const next = { configured: true, token: cfg.token, aigcReady: !!cfg.aigcReady, requests, counts, fetchedAt: new Date().toISOString() };
+  const daily = dailySeries({ content: cDates, design: dDates, video: vDates, aigc: cfg.aigcReady ? aRows : [] });
+  const next = { configured: true, token: cfg.token, aigcReady: !!cfg.aigcReady, requests, counts, daily, fetchedAt: new Date().toISOString() };
   const prev = cache ? JSON.stringify({ ...cache, fetchedAt: "" }) : "";
   // Tulis KV hanya kalau ada perubahan (hemat kuota tulis KV), kecuali cache sudah > 1 jam.
   const stale = !cache || Date.now() - Date.parse(cache.fetchedAt) > 60 * 60 * 1000;
@@ -472,6 +509,44 @@ async function refresh(env, { force }) {
     await env.STORE.put("cache", JSON.stringify(next));
   }
   return { ok: true, ...next };
+}
+
+// Tanggal sel Lark bisa berupa angka serial (hari sejak 30 Des 1899) atau teks.
+// CONTENT ditulis M/D/YYYY (format ABT), blok lain D/M/YYYY.
+export function dayKey(v, monthFirst = false) {
+  if (typeof v === "number" && v > 30000 && v < 80000) {
+    const d = new Date(Math.round((v - 25569) * 86400000));
+    return d.toISOString().slice(0, 10);
+  }
+  const s = clean(v);
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (m) {
+    const [a, b] = monthFirst ? [m[2], m[1]] : [m[1], m[2]];
+    const y = m[3].length === 2 ? "20" + m[3] : m[3];
+    if (+b < 1 || +b > 12 || +a < 1 || +a > 31) return "";
+    return `${y}-${b.padStart(2, "0")}-${a.padStart(2, "0")}`;
+  }
+  const n = normDate(s);
+  m = n.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  return m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : "";
+}
+
+export function dailySeries({ content = [], design = [], video = [], aigc = [] }) {
+  const count = (rows, monthFirst) => {
+    const out = {};
+    for (const r of rows || []) { const k = dayKey(r && r[0], monthFirst); if (k) out[k] = (out[k] || 0) + 1; }
+    return out;
+  };
+  const prod = {}, up = {};
+  for (const r of aigc || []) {
+    const k = dayKey(r && r[0]);
+    if (!k) continue;
+    prod[k] = (prod[k] || 0) + toNumber(r[1]);
+    up[k] = (up[k] || 0) + toNumber(r[2]);
+  }
+  return { content: count(content, true), design: count(design), video: count(video), aigcProduksi: prod, aigcUpload: up };
 }
 
 export function parseRequests(rows) {
@@ -897,9 +972,11 @@ async function refreshAll(env, me) {
   return fullState(env, me, forUser(lark, me));
 }
 
-// Satu request untuk semua data widget: request creative, EP, dan kalender (kalau boleh).
+// Satu request untuk semua data widget: request creative, EP, kalender (kalau boleh), dan daftar tim.
 async function fullState(env, me, base) {
   const out = base || (await getState(env, me));
+  const accounts = await getAccounts(env);
+  out.team = Object.values(accounts).filter((a) => a.active !== false).map((a) => ({ ...publicUser(a), photoVer: a.photoVer || 0 }));
   const g = await getGoogleConfig(env);
   if (g.ep) out.ep = await getEp(env, me).catch((e) => ({ ok: false, error: e.message }));
   if (g.calendar && allowed(me, "content")) out.cal = await getCalendar(env).catch((e) => ({ ok: false, error: e.message }));

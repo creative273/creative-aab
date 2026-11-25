@@ -101,8 +101,9 @@ async function loadState({ refresh = false } = {}) {
   try {
     const data = refresh ? await api("/api/refresh", {}) : await api("/api/state");
     ui.data = data;
-    if (isLead() && ui.tab === "input") ui.dash = await api("/api/dashboard");
+    if (isLead() && (ui.tab === "input" || (ui.tab === "home" && isFull()))) ui.dash = await api("/api/dashboard");
     await applyGoogle(data);
+    await syncPhotos();
     await checkNewRequests(data.requests || []);
   } catch (e) {
     ui.error = e.message;
@@ -136,34 +137,59 @@ async function checkNewRequests(requests, { silent = false } = {}) {
 
 // ---------- Render ----------
 function render() {
+  applyTheme();
+  if (!isFull() && ui.tab === "home") ui.tab = "request";
   renderBar();
+  renderSide();
+  renderPageHead();
   const view = $("view");
+  const card = (html) => (isFull() ? `<div class="page-card">${html}</div>` : html);
   if (!configured()) {
     view.innerHTML = loginView();
     bindLogin();
   } else if (ui.view === "accounts" && isLead()) {
-    view.innerHTML = accountsView();
+    view.innerHTML = card(accountsView());
     bindAccounts();
   } else if (ui.view === "settings") {
     view.innerHTML = settingsView();
     bindSettings();
+  } else if (ui.tab === "home") {
+    view.innerHTML = homeView();
+    bindHome();
+  } else if (ui.tab === "ep" && isFull()) {
+    // Jendela penuh: daftar di kiri, detail (screenshot slide) di kanan.
+    const open = ui.view === "detail" && ui.ep && ui.ep.items && ui.ep.items.some((x) => x.id === ui.epOpen);
+    view.innerHTML = `<div class="split"><section class="glass">${epListView()}</section><section class="glass">${open ? epDetailView() : `<div class="split-empty">Pilih konten di kiri untuk melihat slide dan memberi keputusan.</div>`}</section></div>`;
+    bindEpList();
+    if (open) bindEpDetail();
   } else if (ui.tab === "ep") {
     view.innerHTML = ui.view === "detail" ? epDetailView() : epListView();
     ui.view === "detail" ? bindEpDetail() : bindEpList();
   } else if (ui.tab === "cal" && canCal()) {
-    view.innerHTML = ui.view === "detail" ? calFormView() : calListView();
+    view.innerHTML = card(ui.view === "detail" ? calFormView() : calListView());
     ui.view === "detail" ? bindCalForm() : bindCalList();
   } else if (ui.tab === "request") {
-    view.innerHTML = ui.view === "detail" ? detailView() : requestListView();
+    view.innerHTML = card(ui.view === "detail" ? detailView() : requestListView());
     ui.view === "detail" ? bindDetail() : bindRequestList();
   } else {
-    view.innerHTML = inputView();
+    view.innerHTML = card(inputView());
     bindInput();
   }
   renderFooter();
+  applyCss();
+}
+
+// CSP aplikasi tidak mengizinkan atribut style di HTML. Gaya dinamis (tinggi grafik, warna) dipasang lewat CSSOM.
+function applyCss(root = document) {
+  root.querySelectorAll("[data-css]").forEach((el) => { el.style.cssText = el.dataset.css; el.removeAttribute("data-css"); });
 }
 
 function renderBar() {
+  const full = isFull() && configured();
+  $("btnMode").hidden = !configured() || full;
+  $("btnMax").hidden = !full;
+  $("btnPin").hidden = full;
+  $("btnSettings").hidden = full;
   const reqs = visibleRequests();
   const open = reqs.filter((r) => r.status !== "done").length;
   $("reqCount").textContent = ui.data ? `(${open})` : "";
@@ -1257,6 +1283,432 @@ function bindCalForm() {
   });
 }
 
+// ===================== v1.3: tema, jendela penuh, foto, ringkasan =====================
+const isFull = () => ui.settings.mode === "full";
+const DEFAULT_ACCENT = "#5B9BE6";
+const ACCENTS = ["#5B9BE6", "#3DBE9A", "#E7A93B", "#E36B7B", "#9C7BEA", "#E07BC1", "#D8DEE6"];
+const hexOk = (h) => /^#[0-9a-f]{6}$/i.test(h || "");
+const clamp = (v, a, b) => Math.min(b, Math.max(a, Number.isFinite(+v) ? +v : a));
+
+// Kontras teks di atas warna aksen: pilih gelap atau putih, mana yang kontrasnya lebih tinggi.
+function luminance(hex) {
+  const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+function onAccent(hex) {
+  const L = luminance(hex);
+  return contrast(L, luminance("#08111D")) >= contrast(L, 1) ? "#08111D" : "#FFFFFF";
+}
+
+function applyTheme() {
+  const s = ui.settings;
+  const r = document.documentElement;
+  const acc = hexOk(s.accent) ? s.accent : DEFAULT_ACCENT;
+  r.style.setProperty("--accent", acc);
+  r.style.setProperty("--on-accent", onAccent(acc));
+  r.style.setProperty("--glass", String(clamp(s.glass ?? 0.55, 0.1, 0.9)));
+  r.classList.toggle("light", s.theme === "light");
+  r.classList.toggle("native", !!(ui.win && ui.win.glass));
+  r.classList.toggle("full", isFull() && configured());
+}
+
+async function setMode(mode) {
+  ui.settings = await window.aab.setMode(mode);
+  if (mode === "compact" && ui.tab === "home") ui.tab = "request";
+  if (mode === "full" && configured() && ui.tab === "request" && ui.view === "list") ui.tab = "home";
+  if (ui.view === "detail" && ui.tab !== "ep") ui.view = "list";
+  render();
+  if (mode === "full" && isLead()) loadState();
+}
+
+// ---------- Foto profil ----------
+function photoCache() {
+  try { return JSON.parse(localStorage.getItem("photos") || "{}"); } catch { return {}; }
+}
+async function syncPhotos() {
+  const team = (ui.data && ui.data.team) || [];
+  if (!ui.photos) ui.photos = photoCache();
+  const need = team.some((t) => (t.photoVer || 0) !== ((ui.photos[t.username] || {}).ver || 0));
+  if (!need) return;
+  try {
+    ui.photos = (await api("/api/photos")).photos || {};
+    try { localStorage.setItem("photos", JSON.stringify(ui.photos)); } catch { /* penyimpanan penuh, abaikan */ }
+  } catch { /* foto tidak wajib */ }
+}
+const teamBy = (key, val) => ((ui.data && ui.data.team) || []).find((t) => t[key] === val) || null;
+function avatar(username, size = "", fallbackName = "") {
+  const t = teamBy("username", username);
+  const short = t && (MEMBERS.find((m) => m.id === t.member) || {}).short;
+  const name = short || (t && t.name) || fallbackName || username || "?";
+  const p = ui.photos && ui.photos[username];
+  const cls = `avatar${size ? " " + size : ""}`;
+  if (p && p.image && /^data:image\//.test(p.image)) return `<span class="${cls}"><img src="${esc(p.image)}" alt=""></span>`;
+  return `<span class="${cls}" aria-hidden="true">${esc(name.trim().charAt(0).toUpperCase())}</span>`;
+}
+const memberAvatar = (memberId, size) => {
+  const t = teamBy("member", memberId);
+  const m = MEMBERS.find((x) => x.id === memberId);
+  return avatar(t ? t.username : "", size, m ? m.short : "?");
+};
+
+// Potong tengah jadi persegi 256 px, JPEG. Hasilnya sekitar 15 sampai 35 KB.
+async function photoToDataUrl(file) {
+  const bmp = await createImageBitmap(file);
+  const side = Math.min(bmp.width, bmp.height);
+  const c = document.createElement("canvas");
+  c.width = c.height = 256;
+  c.getContext("2d").drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, 256, 256);
+  for (const q of [0.85, 0.7, 0.55]) {
+    const url = c.toDataURL("image/jpeg", q);
+    if (url.length < 75 * 1024) return url;
+  }
+  throw new Error("Foto terlalu besar. Coba foto lain.");
+}
+
+// ---------- Sidebar ----------
+const ICONS = {
+  home: '<rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="11" y="3" width="6" height="6" rx="1.5"/><rect x="3" y="11" width="6" height="6" rx="1.5"/><rect x="11" y="11" width="6" height="6" rx="1.5"/>',
+  request: '<path d="M4 5h12M4 10h12M4 15h7"/>',
+  input: '<path d="M4 16V9M10 16V4M16 16v-5"/>',
+  ep: '<rect x="3" y="4" width="14" height="10" rx="2"/><path d="M7 17h6"/>',
+  cal: '<rect x="3" y="4" width="14" height="13" rx="2"/><path d="M3 8h14M7 2v4M13 2v4"/>',
+  accounts: '<circle cx="7" cy="7" r="3"/><circle cx="14" cy="8" r="2.5"/><path d="M2 17c0-3 2.5-5 5-5s5 2 5 5M12 13c3 0 6 1.5 6 4"/>',
+  settings: '<circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6"/>',
+};
+function currentPage() {
+  if (ui.view === "settings") return "settings";
+  if (ui.view === "accounts") return "accounts";
+  return ui.tab;
+}
+function navItems() {
+  const reqOpen = visibleRequests().filter((r) => r.status !== "done").length;
+  const epItems = (ui.ep && ui.ep.items) || [];
+  const epBadge = isLead() ? epItems.filter((i) => !i.posted && !i.decision).length : epItems.filter((i) => !i.posted && i.decision && i.decision.status === "REVISI").length;
+  return [
+    { group: "HARIAN" },
+    { id: "home", label: "Ringkasan", c: "#7FB2EE" },
+    { id: "request", label: "Request creative", c: "#F3C77A", badge: reqOpen },
+    { id: "input", label: isLead() ? "KPI tim" : "Input KPI", c: "#8FE3B5" },
+    { group: "KONTEN" },
+    { id: "ep", label: "Editorial plan", c: "#FFB4BB", badge: epBadge },
+    ...(canCal() ? [{ id: "cal", label: "Kalender konten", c: "#C9B6FF" }] : []),
+    { group: isLead() ? "TIM" : "AKUN" },
+    ...(isLead() ? [{ id: "accounts", label: "Akun tim", c: "#D6E0EC" }] : []),
+    { id: "settings", label: "Pengaturan", c: "#D6E0EC" },
+  ];
+}
+function renderSide() {
+  const side = $("side");
+  const show = isFull() && configured();
+  side.hidden = !show;
+  if (!show) return;
+  const u = ui.settings.user || {};
+  const cur = currentPage();
+  const role = isLead() ? "Creative Lead" : `Tim creative, blok ${(member() || {}).block || ""}`;
+  const t = ui.data && ui.data.fetchedAt ? new Date(ui.data.fetchedAt) : null;
+  side.innerHTML = `
+    <div class="me">${avatar(u.username, "", u.name)}<div data-css="min-width:0"><b>${esc(u.name || u.username)}</b><small>${esc(role)}</small></div></div>
+    ${navItems().map((n) => n.group ? `<div class="nav-group">${n.group}</div>` :
+      `<button class="nav" data-nav="${n.id}" ${cur === n.id ? 'aria-current="page"' : ""} data-css="--c:${n.c}">
+        <span class="ic"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">${ICONS[n.id]}</svg></span>${esc(n.label)}
+        ${n.badge ? `<span class="badge">${n.badge}</span>` : ""}</button>`).join("")}
+    <div class="side-foot">
+      <img src="logo.png" alt="">
+      <div><b>Creative AAB</b><small>${ui.update && ui.update.current ? `v${esc(ui.update.current)}` : ""}${t ? ` · data ${pad(t.getHours())}.${pad(t.getMinutes())}` : ""}</small></div>
+      <button class="icon-btn" data-act="toCompact" aria-label="Kecilkan jadi widget" title="Kecilkan jadi widget">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="2"/><rect x="10" y="10" width="7" height="7" rx="1.5" fill="currentColor" stroke="none"/></svg>
+      </button>
+    </div>`;
+  applyCss(side);
+  side.querySelectorAll("[data-nav]").forEach((b) => b.addEventListener("click", () => goPage(b.dataset.nav)));
+  side.querySelector('[data-act="toCompact"]').addEventListener("click", () => setMode("compact"));
+}
+function goPage(id, extra = {}) {
+  ui.form = {};
+  if (id === "settings") { ui.view = "settings"; }
+  else if (id === "accounts") { ui.view = "accounts"; ui.accounts = null; loadAccounts(); }
+  else { ui.tab = id; ui.view = "list"; }
+  Object.assign(ui, extra);
+  render();
+  if (isLead() && (id === "home" || id === "input")) loadState();
+}
+
+// ---------- Judul halaman (jendela penuh) ----------
+function greeting() {
+  const h = new Date().getHours();
+  return h < 11 ? "Selamat pagi" : h < 15 ? "Selamat siang" : h < 19 ? "Selamat sore" : "Selamat malam";
+}
+const HARI_PANJANG = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+const BULAN_PANJANG = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+function renderPageHead() {
+  const el = $("pageHead");
+  const show = isFull() && configured();
+  el.hidden = !show;
+  if (!show) return;
+  const d = new Date();
+  const today = `${HARI_PANJANG[d.getDay()]}, ${d.getDate()} ${BULAN_PANJANG[d.getMonth()]} ${d.getFullYear()}`;
+  const first = ((ui.settings.user && ui.settings.user.name) || "").split(" ")[0];
+  const heads = {
+    home: [`${greeting()}, ${first}`, today],
+    request: ["Request creative", isLead() ? "Semua request dari sheet REQUEST CREATIVE" : "Request yang sudah di-approve Ray"],
+    input: [isLead() ? "KPI tim" : "Input KPI", isLead() ? "Angka bulan ini dan aktivitas terbaru" : `Blok ${(member() || {}).block || ""} di Creative Report Analytic`],
+    ep: ["Editorial plan", ui.ep && ui.ep.title ? `${ui.ep.title} · ${ui.ep.items.length} konten` : "Google Slides EP bulan ini"],
+    cal: ["Kalender konten", ui.cal && ui.cal.title ? ui.cal.title : "Content Calendar bulan ini"],
+    accounts: ["Akun tim", "Buat akun, reset password, atau nonaktifkan akun"],
+    settings: ["Pengaturan", "Tampilan berlaku di laptop ini. Foto profil terlihat oleh seluruh tim."],
+  };
+  const [h, p] = heads[currentPage()] || heads.home;
+  el.innerHTML = `<div><h1>${esc(h)}</h1><p>${esc(p)}</p></div>`;
+}
+
+// ---------- Ringkasan ----------
+const isoDay = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const lastDays = (n) => Array.from({ length: n }, (_, i) => { const d = new Date(); d.setDate(d.getDate() - (n - 1 - i)); return isoDay(d); });
+const SERIES = {
+  fitria: { key: "content", label: "Konten", color: "var(--accent-2)" },
+  athallah: { key: "design", label: "Desain", color: "#8FE3B5" },
+  albar: { key: "video", label: "Video", color: "#F3C77A" },
+  rifqi: { key: "aigcUpload", label: "AIGC upload", color: "#C9B6FF" },
+};
+const seriesOf = (memberId) => ((ui.data && ui.data.daily) || {})[SERIES[memberId].key] || {};
+const sumDays = (obj, days) => days.reduce((a, d) => a + (obj[d] || 0), 0);
+function sparkPath(vals) {
+  const max = Math.max(1, ...vals);
+  return vals.map((v, i) => `${i ? "L" : "M"}${Math.round((i / (vals.length - 1)) * 200)} ${Math.round(31 - (v / max) * 27)}`).join(" ");
+}
+
+function kpiCard(id) {
+  const m = MEMBERS.find((x) => x.id === id);
+  const c = (ui.data && ui.data.counts) || {};
+  const s = SERIES[id];
+  const ser = seriesOf(id);
+  const week = sumDays(ser, lastDays(7));
+  const num = id === "fitria" ? c.content : id === "athallah" ? c.design : id === "albar" ? c.video : c.aigcProduksi;
+  const last = ui.dash && ui.dash.last ? ui.dash.last[id] : null;
+  const label = { fitria: "Konten IG", athallah: "Desain", albar: "Video", rifqi: "AIGC" }[id];
+  return `<div class="kpi glass">
+    <div class="kpi-top">${memberAvatar(id, "sm")}<b>${esc(m.short)}</b> · ${label}</div>
+    <div class="kpi-num">${num ?? 0}${id === "rifqi" ? `<small>produksi · ${c.aigcUpload ?? 0} upload</small>` : ""}<span class="delta${week ? "" : " zero"}">+${week} 7 hari</span></div>
+    <svg class="spark" viewBox="0 0 200 34" preserveAspectRatio="none" aria-hidden="true"><path d="${sparkPath(lastDays(14).map((d) => ser[d] || 0))}" fill="none" stroke="${s.color}" stroke-width="2"/></svg>
+    <div class="kpi-foot">${isLead() ? `Input terakhir lewat widget: ${esc(ago(last))}` : `Total bulan ini, blok ${esc(m.block)}`}</div>
+  </div>`;
+}
+
+function todoItems() {
+  const items = [];
+  const reqs = visibleRequests();
+  const today = todayISO();
+  const ep = (ui.ep && ui.ep.configured && ui.ep.items) || [];
+  const cal = (ui.cal && ui.cal.configured && ui.cal.rows) || [];
+  if (isLead()) {
+    const need = reqs.filter((r) => r.status !== "done" && !r.decision);
+    if (need.length) items.push({ n: need.length, cls: "amb", t: "Request menunggu keputusanmu", s: `Contoh: ${need[0].info.slice(0, 70)}`, btn: "Putuskan", acc: true, go: ["request", { filter: "baru" }] });
+  } else {
+    const work = reqs.filter((r) => r.status !== "done");
+    if (work.length) items.push({ n: work.length, cls: "amb", t: "Request creative belum selesai", s: work[0].info.slice(0, 70), btn: "Kerjakan", acc: true, go: ["request", {}] });
+  }
+  const rev = ep.filter((i) => !i.posted && i.decision && i.decision.status === "REVISI");
+  if (rev.length) items.push({ n: rev.length, cls: "red", t: "EP perlu revisi", s: rev.map((i) => i.cover).filter(Boolean).slice(0, 2).join(", "), btn: "Lihat EP", go: ["ep", { epFilter: "rev" }] });
+  if (isLead()) {
+    const wait = ep.filter((i) => !i.posted && !i.decision);
+    if (wait.length) items.push({ n: wait.length, cls: "blu", t: "EP menunggu OKE", s: wait.map((i) => i.cover).filter(Boolean).slice(0, 2).join(", "), btn: "Tinjau", go: ["ep", { epFilter: "wait" }] });
+  }
+  if (canCal()) {
+    const late = cal.filter((r) => !r.noPosting && r.content && !r.posting && r.date && r.date < today);
+    if (late.length) items.push({ n: late.length, cls: "red", t: "Konten lewat tanggal, belum posting", s: late.slice(0, 2).map((r) => r.content).join(", "), btn: "Kalender", go: ["cal", { calFilter: "todo" }] });
+    const todayRows = cal.filter((r) => !r.noPosting && r.content && !r.posting && r.date === today);
+    if (todayRows.length) items.push({ n: todayRows.length, cls: "blu", t: "Jadwal posting hari ini", s: todayRows.map((r) => r.content).join(", "), btn: "Kalender", go: ["cal", { calFilter: "week" }] });
+  }
+  const m = member();
+  if (m && !isLead() && SERIES[m.id] && ui.data && ui.data.daily) {
+    const key = m.id === "rifqi" ? "aigcProduksi" : SERIES[m.id].key;
+    if (!(ui.data.daily[key] || {})[today]) items.push({ n: "!", cls: "blu", t: "Belum ada input KPI hari ini", s: "Kirim begitu ada hasil kerja hari ini.", btn: "Input", go: ["input", {}] });
+  }
+  return items;
+}
+
+function chartBox() {
+  const days = lastDays(7);
+  const ids = isLead() ? Object.keys(SERIES) : member() && SERIES[member().id] ? [member().id] : [];
+  if (!ids.length) return "";
+  const cols = days.map((d) => ids.map((id) => seriesOf(id)[d] || 0));
+  const max = Math.max(1, ...cols.map((c) => c.reduce((a, b) => a + b, 0)));
+  const k = 150 / max;
+  return `<section class="box glass">
+    <h2>Input KPI per hari <small>${esc(fmtDate(days[0]))} sampai ${esc(fmtDate(days[6]))}</small></h2>
+    <div class="chart" role="img" aria-label="Jumlah input KPI per hari, 7 hari terakhir">
+      ${cols.map((c) => `<div class="bar-col">${c.map((v, i) => (v ? `<i data-css="height:${Math.round(v * k)}px;background:${SERIES[ids[i]].color}" title="${SERIES[ids[i]].label}: ${v}"></i>` : "")).join("")}</div>`).join("")}
+    </div>
+    <div class="axis">${days.map((d) => `<span>${esc(fmtDate(d))}</span>`).join("")}</div>
+    <div class="legend">${ids.map((id) => `<span data-css="--c:${SERIES[id].color}">${SERIES[id].label}</span>`).join("")}</div>
+  </section>`;
+}
+
+function planBox() {
+  if (!canCal() || !ui.cal || !ui.cal.configured) return "";
+  const [a, b] = weekRange();
+  const rows = ui.cal.rows.filter((r) => r.date >= a && r.date <= b);
+  const accs = ui.cal.accounts || [];
+  const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(`${a}T00:00:00`); d.setDate(d.getDate() + i); return isoDay(d); });
+  const today = todayISO();
+  return `<section class="box glass">
+    <h2>Content plan <small>${esc(fmtDate(a))} sampai ${esc(fmtDate(b))}</small></h2>
+    ${accs.map((acc) => {
+      const mine = rows.filter((r) => r.account === acc && !r.noPosting && r.content);
+      const done = mine.filter((r) => r.posting).length;
+      return `<div class="plan-line"><b>${esc(acc)}</b><div class="track"><i data-css="width:${mine.length ? Math.round((done / mine.length) * 100) : 0}%"></i></div><em>${done}/${mine.length}</em></div>`;
+    }).join("")}
+    <div class="days">${days.map((d) => {
+      const dr = rows.filter((r) => r.date === d);
+      const dots = dr.map((r) => (r.noPosting ? '<i class="x"></i>' : r.posting ? "<i></i>" : '<i class="p"></i>')).join("");
+      const dt = new Date(`${d}T00:00:00`);
+      return `<button class="day${d === today ? " today" : ""}" data-goday="${d}" data-css="border:0">${HARI[dt.getDay()]}<b>${dt.getDate()}</b><div class="dots">${dots}</div></button>`;
+    }).join("")}</div>
+  </section>`;
+}
+
+function epBox() {
+  if (!ui.ep || !ui.ep.configured) return "";
+  const items = ui.ep.items;
+  const wait = items.filter((i) => !i.posted && !i.decision).length;
+  const rev = items.filter((i) => !i.posted && i.decision && i.decision.status === "REVISI").length;
+  const posted = items.filter((i) => i.posted).length;
+  const next = items.filter((i) => !i.posted && i.date >= todayISO()).sort((x, y) => x.date.localeCompare(y.date)).slice(0, 3);
+  return `<section class="box glass">
+    <h2>Editorial plan</h2>
+    <div class="mini-stats">
+      <button data-goep="wait"><b>${wait}</b>menunggu OKE</button>
+      <button data-goep="rev"><b>${rev}</b>revisi</button>
+      <button data-goep="all"><b>${posted}</b>posted</button>
+    </div>
+    ${next.length ? `<div class="mini-list">${next.map((i) => `<button data-epopen="${esc(i.id)}"><span>${esc(fmtDate(i.date))}: ${esc(i.cover || i.format)}</span>${epPill(i)}</button>`).join("")}</div>` : ""}
+  </section>`;
+}
+
+function activityBox() {
+  if (!isLead() || !ui.dash) return "";
+  const act = (ui.dash.activity || []).slice(0, 6);
+  return `<section class="box glass">
+    <h2>Aktivitas tim</h2>
+    ${act.length ? `<ul class="act-list">${act.map((x) => `<li>${avatar(x.who, "sm")}<div>${esc(((MEMBERS.find((m) => m.id === x.member) || {}).short || x.who))}: ${esc(x.text)}</div><span>${esc(ago(x.at))}</span></li>`).join("")}</ul>` : `<p class="all-clear">Belum ada kiriman lewat widget.</p>`}
+  </section>`;
+}
+
+function homeView() {
+  const blocked = stateBlock();
+  if (blocked) return blocked;
+  const todo = todoItems();
+  const ids = isLead() ? Object.keys(SERIES) : member() && SERIES[member().id] ? [member().id] : [];
+  return `<div class="home">
+    ${ids.length ? `<div class="home-grid kpis">${ids.map(kpiCard).join("")}</div>` : ""}
+    <div class="home-grid two">
+      <section class="box glass">
+        <h2>Perlu ditangani sekarang</h2>
+        ${todo.length ? `<div class="todo">${todo.map((t, i) => `<div class="todo-item"><span class="n ${t.cls}">${t.n}</span><div><b>${esc(t.t)}</b><small>${esc(t.s)}</small></div><button class="chip${t.acc ? " acc" : ""}" data-todo="${i}">${esc(t.btn)}</button></div>`).join("")}</div>` : `<p class="all-clear">Semua beres. Tidak ada yang menunggu.</p>`}
+      </section>
+      ${chartBox() || epBox()}
+    </div>
+    <div class="home-grid three">${planBox()}${chartBox() ? epBox() : ""}${activityBox()}</div>
+  </div>`;
+}
+
+function bindHome() {
+  bindCommon();
+  const todo = todoItems();
+  document.querySelectorAll("[data-todo]").forEach((b) => b.addEventListener("click", () => { const t = todo[+b.dataset.todo]; goPage(t.go[0], t.go[1]); }));
+  document.querySelectorAll("[data-goep]").forEach((b) => b.addEventListener("click", () => goPage("ep", { epFilter: b.dataset.goep })));
+  document.querySelectorAll("[data-epopen]").forEach((b) => b.addEventListener("click", () => { goPage("ep", { epOpen: b.dataset.epopen }); ui.view = "detail"; render(); }));
+  document.querySelectorAll("[data-goday]").forEach((b) => b.addEventListener("click", () => goPage("cal", { calFilter: "week" })));
+}
+
+// ---------- Personalisasi ----------
+function lookSection() {
+  const s = ui.settings;
+  const u = s.user || {};
+  const acc = hexOk(s.accent) ? s.accent : DEFAULT_ACCENT;
+  const custom = !ACCENTS.includes(acc.toUpperCase()) && !ACCENTS.includes(acc);
+  const w = ui.win || {};
+  const f = ui.form;
+  return `<div class="section">
+    <h2>Foto profil</h2>
+    <div class="photo-row">${avatar(u.username, "lg", u.name)}
+      <div><div class="btns"><label class="btn" data-css="cursor:pointer">${f.busyPhoto ? "Mengunggah…" : "Ganti foto"}<input type="file" id="photoFile" accept="image/png,image/jpeg,image/webp" hidden ${f.busyPhoto ? "disabled" : ""}></label>
+        ${ui.photos && ui.photos[u.username] ? `<button class="btn secondary" data-act="photoDel">Hapus</button>` : ""}</div>
+        <p class="hint">JPG atau PNG. Dipotong bulat otomatis dan terlihat oleh seluruh tim.</p></div>
+    </div>
+  </div>
+  <div class="section">
+    <h2>Warna aksen</h2>
+    <div class="swatches" role="group" aria-label="Warna aksen">
+      ${ACCENTS.map((c) => `<button class="sw" data-css="--c:${c}" data-accent="${c}" aria-pressed="${acc.toUpperCase() === c}" aria-label="Aksen ${c}"></button>`).join("")}
+      <span class="sw-custom${custom ? " on" : ""}" title="Pilih warna sendiri"><input type="color" id="accentPick" value="${esc(acc)}" aria-label="Pilih warna aksen sendiri"></span>
+    </div>
+    <p class="hint">Berlaku di jendela penuh, widget kecil, dan pop-up di laptop ini.</p>
+  </div>
+  <div class="section">
+    <h2>Kaca dan tampilan</h2>
+    <label for="glassRange">Transparansi kaca</label>
+    <input type="range" id="glassRange" min="0.1" max="0.9" step="0.05" value="${clamp(s.glass ?? 0.55, 0.1, 0.9)}">
+    <div class="opt"><div>Efek kaca Windows 11<small>${w.glassSupported ? "Wallpaper terlihat buram di belakang jendela." : "Hanya tersedia di Windows 11. Di laptop ini memakai latar gradasi."}</small></div>
+      <span class="switch"><input type="checkbox" id="optNative" ${w.glassSupported && s.nativeGlass !== false ? "checked" : ""} ${w.glassSupported ? "" : "disabled"} aria-label="Efek kaca Windows 11"><span></span></span></div>
+    <div class="opt"><div>Mode terang<small>Untuk ruangan yang terang</small></div>
+      <span class="switch"><input type="checkbox" id="optLight" ${s.theme === "light" ? "checked" : ""} aria-label="Mode terang"><span></span></span></div>
+    <div class="opt"><div>Buka sebagai jendela penuh<small>Saat Windows menyala. Mati: buka sebagai widget kecil.</small></div>
+      <span class="switch"><input type="checkbox" id="optStartFull" ${s.startMode === "full" ? "checked" : ""} aria-label="Buka sebagai jendela penuh"><span></span></span></div>
+    <div class="opt"><div>Buka otomatis saat Windows menyala</div>
+      <span class="switch"><input type="checkbox" id="sLogin" ${s.openAtLogin ? "checked" : ""} aria-label="Buka otomatis saat Windows menyala"><span></span></span></div>
+  </div>`;
+}
+
+function bindLook() {
+  const save = async (patch, look = false) => {
+    ui.settings = await window.aab.saveSettings(patch);
+    if (look) ui.win = await window.aab.applyLook();
+    applyTheme();
+  };
+  document.querySelectorAll("[data-accent]").forEach((b) => b.addEventListener("click", async () => { await save({ accent: b.dataset.accent }); render(); }));
+  const pick = $("accentPick");
+  if (pick) {
+    pick.addEventListener("input", () => { document.documentElement.style.setProperty("--accent", pick.value); document.documentElement.style.setProperty("--on-accent", onAccent(pick.value)); });
+    pick.addEventListener("change", async () => { await save({ accent: pick.value }); render(); });
+  }
+  const g = $("glassRange");
+  if (g) {
+    g.addEventListener("input", () => document.documentElement.style.setProperty("--glass", g.value));
+    g.addEventListener("change", () => save({ glass: +g.value }));
+  }
+  const chk = (id, fn) => { const el = $(id); if (el) el.addEventListener("change", () => fn(el.checked)); };
+  chk("optNative", (v) => save({ nativeGlass: v }, true));
+  chk("optLight", (v) => save({ theme: v ? "light" : "dark" }, true));
+  chk("optStartFull", (v) => save({ startMode: v ? "full" : "compact" }));
+  const file = $("photoFile");
+  if (file) file.addEventListener("change", async () => {
+    const f0 = file.files && file.files[0];
+    if (!f0) return;
+    ui.form.busyPhoto = true; render();
+    try {
+      const image = await photoToDataUrl(f0);
+      const r = await api("/api/me/photo", { image });
+      const me = ui.settings.user.username;
+      ui.photos = { ...(ui.photos || {}), [me]: { ver: r.photoVer, image } };
+      try { localStorage.setItem("photos", JSON.stringify(ui.photos)); } catch { /* abaikan */ }
+      ui.form = { msg: "Foto profil diganti.", msgType: "ok" };
+    } catch (e) { ui.form = { msg: e.message, msgType: "err" }; }
+    render();
+  });
+  on("photoDel", async () => {
+    try {
+      await api("/api/me/photo", { image: "" });
+      const me = ui.settings.user.username;
+      if (ui.photos) delete ui.photos[me];
+      try { localStorage.setItem("photos", JSON.stringify(ui.photos || {})); } catch { /* abaikan */ }
+      ui.form = { msg: "Foto profil dihapus.", msgType: "ok" };
+    } catch (e) { ui.form = { msg: e.message, msgType: "err" }; }
+    render();
+  });
+}
+
 // ---------- Login ----------
 function loginView() {
   const f = ui.form;
@@ -1287,7 +1739,7 @@ function bindLogin() {
       ui.settings = { ...ui.settings, serverUrl: url, token: "" };
       const res = await api("/api/login", { username, password });
       ui.settings = await window.aab.saveSettings({ serverUrl: url, token: res.token, user: res.user });
-      ui.form = {}; ui.tab = "request"; ui.view = "list"; ui.filter = null;
+      ui.form = {}; ui.tab = isFull() ? "home" : "request"; ui.view = "list"; ui.filter = null;
       await loadState();
     } catch (e) {
       ui.form.busy = false; ui.form.lPass = ""; setMsg(e.message, "err");
@@ -1324,11 +1776,25 @@ function settingsView() {
   const f = ui.form;
   const u = s.user || {};
   const lead = isLead();
+  const account = `<p class="hint">Masuk sebagai <b>${esc(u.username)}</b> (${esc(u.name || "")}). <button class="linklike" data-act="logout">Keluar</button></p>`;
+  if (isFull()) {
+    // Jendela penuh: kiri tampilan dan akun, kanan pengaturan kerja.
+    return `<div class="settings-grid">
+      <div class="page-card"><div class="pad"><h2>Tampilan</h2>${account}${lookSection()}</div></div>
+      <div class="page-card"><div class="pad">${settingsWork(f, lead)}</div></div>
+    </div>`;
+  }
   return `<div class="pad">
     <button class="back" data-act="back">← Kembali</button>
     <h2>Pengaturan</h2>
-    <p class="hint">Masuk sebagai <b>${esc(u.username)}</b> (${esc(u.name || "")}). <button class="linklike" data-act="logout">Keluar</button></p>
-    ${updateBox()}
+    ${account}
+    ${lookSection()}
+    ${settingsWork(f, lead)}
+  </div>`;
+}
+
+function settingsWork(f, lead) {
+  return `${updateBox()}
     ${lead ? `<div class="section">
       <h2>Link sheet bulan ini</h2>
       <p class="hint">Tiap awal bulan, setelah file baru diduplikat dan app ditambahkan ke file, tempel link file baru di sini.</p>
@@ -1348,12 +1814,7 @@ function settingsView() {
         <div class="row2"><button class="btn secondary" data-act="pwCancel">Batal</button><button class="btn" data-act="pwSave" ${f.busyPw ? "disabled" : ""}>${f.busyPw ? "Menyimpan…" : "Simpan"}</button></div>`
         : `<button class="btn secondary" data-act="pwOpen">Ganti password</button>`}
     </div>
-    <div class="section">
-      <h2>Laptop ini</h2>
-      <label class="check"><input type="checkbox" id="sLogin" ${s.openAtLogin ? "checked" : ""}> Buka otomatis saat Windows menyala</label>
-    </div>
-    ${f.msg ? `<p class="msg ${f.msgType}" role="status">${f.msgHtml ? f.msg : esc(f.msg)}</p>` : ""}
-  </div>`;
+    ${f.msg ? `<p class="msg ${f.msgType}" role="status">${f.msgHtml ? f.msg : esc(f.msg)}</p>` : ""}`;
 }
 
 function googleSettings() {
@@ -1374,6 +1835,7 @@ function googleSettings() {
 
 function bindSettings() {
   bindCommon();
+  bindLook();
   keep(["sSheet", "pOld", "pNew", "gCal", "gEp"]);
   if (isLead() && !ui.gcfg) api("/api/google").then((g) => { ui.gcfg = g; if (ui.view === "settings") render(); }).catch((e) => { ui.gcfg = { serviceAccount: "" }; ui.form.msg = e.message; ui.form.msgType = "err"; render(); });
   on("copySa", () => { const el = $("saEmail"); el.select(); navigator.clipboard.writeText(el.value).catch(() => document.execCommand("copy")); setMsg("Email service account disalin.", "ok"); });
@@ -1610,6 +2072,12 @@ function bindCommon() {
 // ---------- Mulai ----------
 async function init() {
   ui.settings = await window.aab.getSettings();
+  ui.win = await window.aab.windowInfo();
+  ui.photos = photoCache();
+  if (isFull()) ui.tab = "home";
+  applyTheme();
+  $("btnMode").addEventListener("click", () => setMode("full"));
+  $("btnMax").addEventListener("click", () => window.aab.toggleMaximize());
   $("tabRequest").addEventListener("click", () => { ui.tab = "request"; ui.view = "list"; ui.form = {}; render(); });
   $("tabInput").addEventListener("click", () => { ui.tab = "input"; ui.view = "list"; ui.form = {}; render(); if (isLead()) loadState(); });
   $("tabEp").addEventListener("click", () => { ui.tab = "ep"; ui.view = "list"; ui.form = {}; render(); });

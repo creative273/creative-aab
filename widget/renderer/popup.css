@@ -1,6 +1,12 @@
 * { box-sizing: border-box; }
+:root { --accent: #5B9BE6; }
+html.light, html.light body { background: #FFFFFF; color: #0E1A2B; }
+html.light .toast { border-top-color: #D5DEEA; }
+html.light .app, html.light .body { color: #4A5B72; }
+html.light .actions button { background: #F1F4F9; border-color: #C9D4E3; color: #0E1A2B; }
+html.light #open { background: #0E1A2B; color: #FFFFFF; border-color: #0E1A2B; }
 html, body { margin: 0; height: 100%; background: #0E1A2B; color: #EEF3FA; font-family: "Segoe UI", system-ui, sans-serif; overflow: hidden; }
-.toast { height: 100%; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; border-left: 4px solid #5B9BE6; border-top: 1px solid #1F334D; }
+.toast { height: 100%; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; border-left: 4px solid var(--accent); border-top: 1px solid #1F334D; }
 .app { margin: 0; font-size: 12px; color: #9DB0C8; display: flex; align-items: center; gap: 6px; }
 .app img { width: 16px; height: 16px; border-radius: 4px; }
 .title { margin: 0; font-size: 15px; font-weight: 700; }

@@ -8,10 +8,13 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<aside class="side" id="side" hidden aria-label="Menu utama"></aside>
+<div class="app-main">
 <header class="bar">
   <img class="bar-logo" src="logo.png" alt="Creative AAB" width="28" height="28">
   <span class="bar-sub" id="barSub"></span>
   <span class="bar-space"></span>
+  <span class="bar-drag"></span>
   <button class="icon-btn" id="btnRefresh" aria-label="Muat ulang data" title="Muat ulang data">
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.8-4.3"/><path d="M16 3.5V7h-3.5"/></svg>
   </button>
@@ -20,6 +23,12 @@
   </button>
   <button class="icon-btn" id="btnSettings" aria-label="Pengaturan" title="Pengaturan">
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6"/></svg>
+  </button>
+  <button class="icon-btn" id="btnMode" aria-label="Buka jendela penuh" title="Buka jendela penuh">
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 8V4h4M16 12v4h-4M4 4l5 5M16 16l-5-5"/></svg>
+  </button>
+  <button class="icon-btn full-only" id="btnMax" aria-label="Perbesar atau kembalikan ukuran" title="Perbesar / kembalikan" hidden>
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="4" width="12" height="12" rx="2"/></svg>
   </button>
   <button class="icon-btn" id="btnHide" aria-label="Sembunyikan ke tray" title="Sembunyikan ke tray">
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 10h10"/></svg>
@@ -31,8 +40,10 @@
   <button class="tab" role="tab" id="tabEp" aria-selected="false">EP <span class="count" id="epCount"></span></button>
   <button class="tab" role="tab" id="tabCal" aria-selected="false">Kalender</button>
 </nav>
+<div class="page-head" id="pageHead" hidden></div>
 <main id="view" tabindex="-1"></main>
 <div class="footer-note" id="footer" aria-live="polite"></div>
+</div>
 <script src="xlsx.full.min.js"></script>
 <script src="app.js"></script>
 </body>

@@ -230,6 +230,27 @@ const rayState = await call("GET", "/api/state");
 assert.ok(rayState.data.requests.length > r.data.requests.length);
 assert.equal((await call("POST", "/api/refresh", {}, T.zahra)).status, 403, "refresh hanya Ray");
 
+// 13b. Data harian untuk grafik (v1.3)
+await call("POST", "/api/refresh", {});
+r = await call("GET", "/api/state", null, T.aqil);
+assert.ok(r.data.daily && r.data.daily.design["2026-11-25"] >= 1, JSON.stringify(r.data.daily));
+assert.ok(Array.isArray(r.data.team) && r.data.team.some((t) => t.username === "aqil"));
+assert.ok(!JSON.stringify(r.data.team).includes('"hash"'));
+// Foto profil
+const tiny = "data:image/jpeg;base64," + Buffer.from("fotokecil").toString("base64");
+assert.equal((await call("POST", "/api/me/photo", { image: "javascript:alert(1)" }, T.aqil)).status, 400);
+assert.equal((await call("POST", "/api/me/photo", { image: "data:image/jpeg;base64," + "A".repeat(90000) }, T.aqil)).status, 400);
+r = await call("POST", "/api/me/photo", { image: tiny }, T.aqil);
+assert.equal(r.status, 200);
+r = await call("GET", "/api/state", null, T.zahra);
+assert.ok(r.data.team.find((t) => t.username === "aqil").photoVer > 0, "tim lihat versi foto Aqil");
+r = await call("GET", "/api/photos", null, T.zahra);
+assert.equal(r.data.photos.aqil.image, tiny);
+assert.equal((await call("GET", "/api/me", null, T.aqil)).status, 200, "ganti foto tidak mengeluarkan sesi");
+await call("POST", "/api/me/photo", { image: "" }, T.aqil);
+r = await call("GET", "/api/photos", null, T.zahra);
+assert.equal(r.data.photos.aqil, undefined);
+
 // 14. Dashboard Ray
 r = await call("GET", "/api/dashboard");
 assert.equal(r.status, 200, JSON.stringify(r.data));

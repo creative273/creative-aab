@@ -67,6 +67,13 @@ Widget otomatis terbuka saat Windows menyala. Tombol − menyembunyikannya ke tr
 
 **Pembaruan data:** server mengecek sheet tiap 10 menit, widget mengambil data dari server tiap 5 menit dan saat jendela dibuka (paling sering sekali per menit). Tombol muat ulang hanya ada di widget Ray, dan dalam satu menit hanya satu kali yang benar-benar mengecek sheet, berapa kali pun diklik. Kalau batas gratis harian Cloudflare tercapai, widget menampilkan pesan dan berhenti mengirim request sampai jam 07.00 WIB. Data di sheet tidak terpengaruh.
 
+## Jendela penuh dan personalisasi (versi 1.3)
+
+- **Dua mode, satu aplikasi.** Tombol panah di bilah atas widget membuka **jendela penuh** (sidebar, Ringkasan, EP dengan daftar dan slide berdampingan). Tombol kotak di kiri bawah sidebar mengecilkannya lagi jadi widget. Semua data dan pengaturan sama di kedua mode.
+- **Ringkasan** (jendela penuh): kartu KPI dengan tren 14 hari, daftar "Perlu ditangani sekarang", grafik input per hari 7 hari terakhir, content plan minggu ini, ringkasan EP, dan aktivitas tim (khusus Ray). Akun tim melihat KPI dan tugasnya sendiri.
+- **Pengaturan → Tampilan** (per laptop): warna aksen (7 pilihan atau warna bebas), transparansi kaca, mode terang, efek kaca Windows 11 (wallpaper terlihat buram di belakang jendela; di Windows 10 memakai latar gradasi), dan pilihan membuka sebagai jendela penuh saat Windows menyala. Pop-up ikut warna aksen.
+- **Foto profil:** Pengaturan → Ganti foto. Foto dipotong bulat, dikompres kecil, disimpan di server, dan terlihat oleh seluruh tim di sidebar, kartu KPI, dan aktivitas.
+
 ## Akun dan akses
 
 | Akun | Akses |
