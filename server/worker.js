@@ -109,10 +109,18 @@ export default {
   async scheduled(event, env, ctx) {
     // Berurutan: Lark dulu, lalu Google, lalu Instagram dengan jatah panggilan terbatas,
     // supaya batas 50 subrequest paket gratis tidak memutus pembaruan sheet.
+    // Jam kerja (Senin sampai Sabtu, 08.00 sampai 18.59 WIB): semuanya tiap 10 menit.
+    // Di luar jam kerja dan hari Minggu: hanya Instagram, tiap 30 menit, tanpa menyentuh sheet Lark.
+    const w = new Date((event && event.scheduledTime) || Date.now());
+    const wib = new Date(w.getTime() + 7 * 3600 * 1000);
+    const work = wib.getUTCDay() !== 0 && wib.getUTCHours() >= 8 && wib.getUTCHours() < 19;
+    if (!work && wib.getUTCMinutes() % 30 >= 10) return;
     ctx.waitUntil((async () => {
-      await refresh(env, { force: true }).catch(() => {});
-      await googleRefreshAll(env).catch(() => {});
-      await igSync(env).catch(() => {});
+      if (work) {
+        await refresh(env, { force: true }).catch(() => {});
+        await googleRefreshAll(env).catch(() => {});
+      }
+      await igSync(env, { sheet: work }).catch(() => {});
     })());
   },
 };
@@ -1576,7 +1584,8 @@ const IG_MEDIA_PER_RUN = 12;
 // Jatah panggilan Instagram per akun per jalan (paket gratis: 50 subrequest per jalan, dibagi dengan Lark dan Google).
 const IG_BUDGET_CRON = 9;
 const IG_BUDGET_MANUAL = 20;
-const IG_PROFILE_EVERY_MS = 3 * 3600 * 1000;
+// Daftar postingan dan insight akun diambil tiap 30 menit supaya postingan baru cepat muncul.
+const IG_PROFILE_EVERY_MS = 30 * 60 * 1000;
 const IG_MEDIA_FRESH_MS = 2 * 3600 * 1000;
 const IG_KEEP_DAYS = 90;
 const IG_MEDIA_DAYS = 60;
@@ -1782,7 +1791,7 @@ async function igRefreshTokens(env, tokens) {
   if (changed) await env.STORE.put("ig:accounts", JSON.stringify(tokens));
 }
 
-async function igSync(env, { force = false } = {}) {
+async function igSync(env, { force = false, sheet = true } = {}) {
   const tokens = await igTokens(env);
   if (!Object.keys(tokens).length) return { ok: true, synced: 0 };
   await igRefreshTokens(env, tokens);
@@ -1794,7 +1803,7 @@ async function igSync(env, { force = false } = {}) {
       await env.STORE.put("ig:accounts", JSON.stringify(tokens));
     }
   }
-  await igSheetSync(env).catch(() => {});
+  if (sheet) await igSheetSync(env).catch(() => {});
   return { ok: true, synced };
 }
 

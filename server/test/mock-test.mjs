@@ -121,6 +121,7 @@ globalThis.fetch = async (url, opts = {}) => {
 };
 
 const kv = new Map();
+const WORK_TIME = Date.UTC(2026, 10, 25, 3, 0); // Rabu 10.00 WIB
 let kvPuts = 0;
 const kvWrites = () => kvPuts;
 const env = {
@@ -283,7 +284,7 @@ r = await call("POST", "/api/kpi/aigc", { tanggal: "26/11/2026", produksi: 1, up
 assert.equal(r.status, 400);
 
 // 12. Cron
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
 
 // 13. Role: tiap akun hanya blok miliknya
 const deny = async (tok, path, body) => assert.equal((await call("POST", path, body, tok)).status, 403, path);
@@ -404,14 +405,14 @@ for (let i = 6; i < 60; i++) if (String(grid[REPORT]["G" + i] || "").includes("D
 assert.ok(carRow, "baris carousel ditemukan");
 write(`${REPORT}!H${carRow}:K${carRow}`, [[777, 1, 1, 1]]);
 kv.delete("ig:sheet"); // sinkron sheet jalan lagi di cron berikutnya
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.deepEqual(read(`${REPORT}!H${carRow}:K${carRow}`)[0], [777, 30, 4, 7]);
 // Token hampir habis diperpanjang otomatis lewat cron
 const tk = JSON.parse(kv.get("ig:accounts"));
 tk.AAB.expiresAt = Date.now() + 5 * 864e5; tk.AAB.refreshedAt = Date.now() - 2 * 864e5;
 kv.set("ig:accounts", JSON.stringify(tk));
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.ok(igCalls.includes("/refresh_access_token"));
 assert.ok(JSON.parse(kv.get("ig:accounts")).AAB.expiresAt > Date.now() + 50 * 864e5);
@@ -450,7 +451,7 @@ assert.ok(fbCalls.some((p) => p.endsWith("/17841471637263858/insights")));
 assert.ok(!JSON.stringify(r.data).includes("EAA"), "token EAA tidak boleh bocor");
 // Token EAA tidak pernah diperpanjang
 const refBefore = igCalls.filter((p) => p === "/refresh_access_token").length;
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.equal(igCalls.filter((p) => p === "/refresh_access_token").length, refBefore);
 assert.equal(JSON.parse(kv.get("ig:accounts")).AAB.error || "", "");
@@ -467,7 +468,7 @@ for (let run = 0; run < 4; run++) {
   // anggap insight sudah basi supaya cron mengambil ulang
   const d = JSON.parse(kv.get("ig:data:NUSANTARA")); d.media.forEach((m) => { if (m.views === null) m.insightsAt = 0; }); kv.set("ig:data:NUSANTARA", JSON.stringify(d));
   const n0 = fbCalls.filter((x) => x.includes("/b")).length;
-  await worker.scheduled({}, env, { waitUntil: (p) => p });
+  await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
   await new Promise((res) => setTimeout(res, 50));
   const used = fbCalls.filter((x) => x.includes("/b")).length - n0;
   assert.ok(used <= 9, "jatah per jalan: " + used);
@@ -486,7 +487,7 @@ const d3 = JSON.parse(kv.get("ig:data:NUSANTARA"));
 d3.media.forEach((m) => { m.insightError = ""; m.insightsAt = Date.now(); });
 d3.media.slice(20, 24).forEach((m) => { m.views = null; m.reach = null; });
 kv.set("ig:data:NUSANTARA", JSON.stringify(d3));
-await worker.scheduled({}, env, { waitUntil: (p) => p });
+await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
 await new Promise((res) => setTimeout(res, 50));
 assert.equal(JSON.parse(kv.get("ig:data:NUSANTARA")).media.slice(20, 24).filter((m) => m.views === null).length, 0, "konten kosong didahulukan");
 
@@ -624,5 +625,24 @@ assert.equal(nu.type, "update"); assert.equal(nu.version, "1.5.2"); assert.match
 assert.equal((await call("GET", "/api/notif", null, T.aqil)).data.unread, 0);
 r = await call("GET", "/api/app/versions");
 assert.equal(r.data.versions.find((x) => x.username === "aqil").version, "1.5.2");
+
+// 22. Jadwal: di luar jam kerja hanya Instagram tiap 30 menit, sheet Lark tidak disentuh
+{
+  const sunday = Date.UTC(2026, 10, 29, 13, 0); // Minggu 20.00 WIB
+  const l0 = calls.length, f0 = fbCalls.length + igCalls.length;
+  const dd = JSON.parse(kv.get("ig:data:AAB")); dd.profileAt = 0; kv.set("ig:data:AAB", JSON.stringify(dd));
+  await worker.scheduled({ scheduledTime: sunday }, env, { waitUntil: (p) => p });
+  await new Promise((res) => setTimeout(res, 50));
+  assert.equal(calls.length - l0, 0, "Minggu malam: Lark tidak dipanggil");
+  assert.ok(fbCalls.length + igCalls.length > f0, "Minggu malam: Instagram tetap diperbarui");
+  const f1 = fbCalls.length + igCalls.length;
+  await worker.scheduled({ scheduledTime: sunday + 15 * 60000 }, env, { waitUntil: (p) => p });
+  await new Promise((res) => setTimeout(res, 50));
+  assert.equal(fbCalls.length + igCalls.length - f1, 0, "menit 15: dilewati");
+  const l1 = calls.length;
+  await worker.scheduled({ scheduledTime: WORK_TIME }, env, { waitUntil: (p) => p });
+  await new Promise((res) => setTimeout(res, 50));
+  assert.ok(calls.length > l1, "jam kerja: sheet diperbarui");
+}
 
 console.log("SEMUA TES LULUS. Panggilan Lark tiruan:", calls.length);
