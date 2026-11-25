@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Creative AAB Mobile, mockup</title>
+<style>
+:root { --bg: #08111D; --panel: #0E1A2B; --panel2: #13233A; --line: #1F334D; --ink: #EEF3FA; --ink2: #9DB0C8; --accent: #5B9BE6; --accent2: #8BBAF2; --ok: #8FE3B5; --okbg: #12382A; --warn: #FFB4BB; --warnbg: #3E1A20; --amber: #F3C77A; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font-family: "Segoe UI", system-ui, sans-serif; color: var(--ink); background: radial-gradient(120% 60% at 0% 0%, #12305a 0%, transparent 60%), radial-gradient(90% 50% at 100% 100%, #1b2f55 0%, transparent 60%), var(--bg); font-size: 15px; line-height: 1.4; }
+.screen { display: none; height: 100vh; flex-direction: column; }
+.screen.on { display: flex; }
+.status { height: 44px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; font-size: 14px; font-weight: 600; flex: none; }
+.top { padding: 6px 18px 12px; display: flex; align-items: center; gap: 12px; flex: none; }
+.top h1 { font-size: 26px; margin: 0; flex: 1; letter-spacing: -.01em; }
+.top .back { font-size: 15px; color: var(--accent2); }
+.me { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #F3A6C8, #8B5CF6); display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+.av { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; flex: none; color: #08111D; }
+.av.sm { width: 30px; height: 30px; font-size: 12px; }
+.a1 { background: #F3A6C8; } .a2 { background: #8BBAF2; } .a3 { background: #FFD8A8; } .a4 { background: #A8E6CF; } .a5 { background: #C9B6FF; }
+.scroll { flex: 1; overflow: hidden; padding: 0 14px; display: flex; flex-direction: column; gap: 10px; }
+.chips { display: flex; gap: 8px; padding: 0 18px 10px; flex: none; }
+.chip { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line); font-size: 13.5px; color: var(--ink2); }
+.chip.on { background: var(--ink); color: var(--bg); border-color: var(--ink); font-weight: 600; }
+.glass { background: rgb(14 26 43 / .78); border: 1px solid rgb(139 186 242 / .14); border-radius: 18px; backdrop-filter: blur(18px); }
+.sec { font-size: 12.5px; color: var(--ink2); font-weight: 600; letter-spacing: .04em; padding: 6px 6px 0; }
+.notif { display: flex; gap: 12px; padding: 12px; align-items: flex-start; }
+.notif.unread { background: rgb(91 155 230 / .14); border-color: rgb(91 155 230 / .35); }
+.notif .t { flex: 1; font-size: 14px; }
+.notif .t small { display: block; color: var(--ink2); font-size: 12px; margin-top: 3px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); margin-top: 6px; flex: none; }
+.badge-ic { position: relative; }
+.badge-ic i { position: absolute; right: -4px; bottom: -4px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-size: 11px; border: 2px solid var(--bg); }
+.tabbar { flex: none; display: flex; justify-content: space-around; padding: 8px 10px 26px; border-top: 1px solid var(--line); background: rgb(5 11 20 / .9); }
+.tab { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11.5px; color: var(--ink2); position: relative; min-width: 80px; }
+.tab.on { color: var(--ink); }
+.tab svg { width: 24px; height: 24px; }
+.tab b { position: absolute; top: -4px; left: calc(50% + 6px); background: #E5484D; color: #fff; font-size: 10.5px; border-radius: 999px; padding: 0 5px; line-height: 16px; }
+.seg { display: flex; margin: 0 18px 12px; background: var(--panel); border-radius: 12px; padding: 3px; flex: none; }
+.seg span { flex: 1; text-align: center; padding: 7px; border-radius: 9px; font-size: 14px; color: var(--ink2); }
+.seg span.on { background: var(--panel2); color: var(--ink); font-weight: 600; }
+.req { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.req .h { display: flex; align-items: center; gap: 10px; }
+.req .h small { color: var(--ink2); font-size: 12px; display: block; }
+.req p { margin: 0; font-size: 14.5px; }
+.meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.pill { font-size: 11.5px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink2); }
+.pill.hot { border-color: #7a4b1c; color: var(--amber); background: #2e2213; }
+.btns { display: flex; gap: 8px; margin-top: 2px; }
+.btn { flex: 1; text-align: center; padding: 10px; border-radius: 12px; font-weight: 600; font-size: 14px; border: 1px solid var(--line); }
+.btn.ok { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn.no { color: var(--warn); border-color: #5b2a32; }
+.ep { padding: 0; overflow: hidden; }
+.ep img { width: 100%; display: block; }
+.ep .b { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.ep h3 { margin: 0; font-size: 17px; }
+.note { background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; color: var(--ink2); font-size: 14px; min-height: 64px; }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 16px 30px; border-radius: 22px 22px 0 0; background: #101e31; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; box-shadow: 0 -20px 60px rgb(0 0 0 / .5); }
+.sheet .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line); align-self: center; }
+.shade { position: absolute; inset: 0; background: rgb(0 0 0 / .45); }
+.post { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.post .h { display: flex; gap: 10px; align-items: center; }
+.post .h small { display: block; color: var(--ink2); font-size: 12px; }
+.post img { width: 100%; border-radius: 12px; }
+.mention { color: var(--accent2); background: rgb(91 155 230 / .18); border-radius: 4px; padding: 0 3px; font-weight: 600; }
+.reacts { display: flex; gap: 6px; font-size: 13px; color: var(--ink2); align-items: center; border-top: 1px solid var(--line); padding-top: 8px; }
+.reacts span { border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; color: var(--ink); }
+.cm { display: flex; gap: 8px; }
+.cm > div:last-child { background: rgb(255 255 255 / .06); border-radius: 14px; padding: 6px 12px; font-size: 13.5px; }
+.cm b { display: block; font-size: 12.5px; }
+.ro { text-align: center; font-size: 12.5px; color: var(--ink2); padding: 4px 0 8px; }
+.lock { background: linear-gradient(180deg, #1d3557, #0b1a2e 55%, #08111D); }
+.clock { text-align: center; margin-top: 40px; }
+.clock b { font-size: 78px; font-weight: 300; letter-spacing: -.02em; display: block; line-height: 1; }
+.clock span { font-size: 17px; color: #cfe0f5; }
+.push { margin: 0 12px; padding: 12px 14px; border-radius: 20px; background: rgb(30 45 70 / .78); backdrop-filter: blur(20px); display: flex; gap: 12px; align-items: flex-start; }
+.push img { width: 38px; height: 38px; border-radius: 9px; }
+.push .t { flex: 1; font-size: 14px; }
+.push .t small { color: #b8c9de; font-size: 12px; float: right; }
+.push .t b { display: block; }
+.login { justify-content: center; padding: 0 26px; gap: 14px; }
+.login img { width: 72px; height: 72px; border-radius: 18px; align-self: center; }
+.login h2 { text-align: center; margin: 4px 0 0; font-size: 24px; }
+.login p { text-align: center; color: var(--ink2); margin: 0 0 10px; }
+.field { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 13px 14px; color: var(--ink2); }
+.toggle { display: flex; align-items: center; justify-content: space-between; padding: 14px; }
+.sw { width: 46px; height: 28px; border-radius: 999px; background: var(--accent); position: relative; }
+.sw.off { background: var(--line); }
+.sw.off::after { right: auto; left: 3px; }
+.sw::after { content: ""; position: absolute; right: 3px; top: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; }
+.hint { color: var(--ink2); font-size: 12.5px; padding: 0 6px; }
+</style></head><body>
+
+<!-- 1. Notifikasi -->
+<section class="screen" id="notif">
+  <div class="status"><span>21.52</span><span>5G ▮▮▮ 87%</span></div>
+  <div class="top"><h1>Notifikasi</h1><div class="me">R</div></div>
+  <div class="chips"><span class="chip on">Semua</span><span class="chip">Belum dibaca · 3</span></div>
+  <div class="scroll">
+    <div class="sec">BARU</div>
+    <div class="notif glass unread"><div class="badge-ic"><div class="av a1">F</div><i style="background:#8BBAF2">@</i></div><div class="t"><b>Fitria Azzahra Kurnia</b> menandai kamu di komentar: “Cover-nya sudah aku upload ya <span class="mention">@Ray</span>”<small>5 menit lalu</small></div><span class="dot"></span></div>
+    <div class="notif glass unread"><div class="badge-ic"><div class="av" style="background:#F3C77A">AS</div><i style="background:#F3C77A">!</i></div><div class="t">Request baru dari <b>ARIL SULAEMAN</b> untuk Athallah: “Banner Shopee 12.12 ukuran story”<small>18 menit lalu · perlu approval</small></div><span class="dot"></span></div>
+    <div class="notif glass unread"><div class="badge-ic"><div class="av a2">A</div><i style="background:#F3A6C8">❤</i></div><div class="t"><b>Albar</b> memberi ❤️ pada postinganmu: “Moodboard event creative minggu depan”<small>1 jam lalu</small></div><span class="dot"></span></div>
+    <div class="sec">SEBELUMNYA</div>
+    <div class="notif glass"><div class="badge-ic"><div class="av a4">R</div><i style="background:#A8E6CF">💬</i></div><div class="t"><b>Rifqi Firega</b> mengomentari postinganmu: “Siap kak, besok aku lanjut upload 10 video”<small>Kemarin 16.40</small></div></div>
+    <div class="notif glass"><div class="badge-ic"><div class="av a1">F</div><i style="background:#8BBAF2">💬</i></div><div class="t"><b>Fitria Azzahra Kurnia</b> juga mengomentari postingan Albar<small>Kemarin 14.12</small></div></div>
+  </div>
+  <nav class="tabbar">
+    <span class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/></svg>Notifikasi<b>3</b></span>
+    <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.5l4.5 4.5L19 7"/></svg>Approval<b>4</b></span>
+    <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>Akun</span>
+  </nav>
+</section>
+
+<!-- 2. Approval: request -->
+<section class="screen" id="req">
+  <div class="status"><span>21.53</span><span>5G ▮▮▮ 87%</span></div>
+  <div class="top"><h1>Approval</h1><div class="me">R</div></div>
+  <div class="seg"><span class="on">Request · 2</span><span>EP · 2</span></div>
+  <div class="scroll">
+    <div class="req glass">
+      <div class="h"><div class="av a3 sm">A</div><div><b>ARIL SULAEMAN</b><small>untuk Athallah · Design · masuk 18 menit lalu</small></div></div>
+      <p>Banner Shopee 12.12 ukuran story (1080×1920), 3 varian warna.</p>
+      <div class="meta"><span class="pill hot">Deadline besok</span><span class="pill">Baris 14</span></div>
+      <div class="btns"><span class="btn ok">Approve</span><span class="btn">Pending</span><span class="btn no">Reject</span></div>
+    </div>
+    <div class="req glass">
+      <div class="h"><div class="av a2 sm">A</div><div><b>DINA (BRAND)</b><small>untuk Albar · Video · masuk 2 jam lalu</small></div></div>
+      <p>Edit ulang video testimoni creator, durasi 30 detik untuk ads.</p>
+      <div class="meta"><span class="pill">Deadline 28 Nov</span><span class="pill">Baris 15</span></div>
+      <div class="btns"><span class="btn ok">Approve</span><span class="btn">Pending</span><span class="btn no">Reject</span></div>
+    </div>
+    <p class="hint">Keputusan langsung tertulis ke sheet Lark, sama seperti dari laptop.</p>
+  </div>
+  <nav class="tabbar">
+    <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/></svg>Notifikasi<b>3</b></span>
+    <span class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.5l4.5 4.5L19 7"/></svg>Approval<b>4</b></span>
+    <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>Akun</span>
+  </nav>
+</section>
+
+<!-- 3. Approval: EP + lembar revisi -->
+<section class="screen" id="ep" style="position:relative">
+  <div class="status"><span>21.54</span><span>5G ▮▮▮ 87%</span></div>
+  <div class="top"><h1>Approval</h1><div class="me">R</div></div>
+  <div class="seg"><span>Request · 2</span><span class="on">EP · 2</span></div>
+  <div class="scroll">
+    <div class="ep glass"><img src="slide.png" alt=""><div class="b">
+      <h3>Modal Jadi Affiliator</h3>
+      <div class="meta"><span class="pill">Reels</span><span class="pill">AAB</span><span class="pill">Upload Rabu, 26 Nov</span><span class="pill">Talent: Refly</span></div>
+      <div class="btns"><span class="btn ok">OKE</span><span class="btn no">Revisi</span></div>
+    </div></div>
+    <div class="ep glass"><img src="slide.png" alt="" style="filter:hue-rotate(160deg)"><div class="b"><h3>3 Tanda Kamu Siap Live</h3></div></div>
+  </div>
+  <div class="shade rev"></div>
+  <div class="sheet rev"><span class="grab"></span><b>Catatan revisi</b>
+    <div class="note">Hook-nya diganti pertanyaan ya, contoh: "Modal jadi affiliator berapa sih?" Sisanya aman.</div>
+    <div class="btns"><span class="btn">Batal</span><span class="btn ok">Kirim revisi</span></div>
+  </div>
+</section>
+
+<!-- 4. Postingan dari notifikasi (hanya baca) -->
+<section class="screen" id="post">
+  <div class="status"><span>21.55</span><span>5G ▮▮▮ 87%</span></div>
+  <div class="top"><span class="back">‹ Notifikasi</span></div>
+  <div class="scroll">
+    <div class="post glass">
+      <div class="h"><div class="av a5">R</div><div><b>Ray Sangkhylang</b><small>Creative Lead · 2 jam lalu</small></div></div>
+      <div>Moodboard event creative minggu depan. Gimana menurut kalian? <span class="mention">@Zahra</span> <span class="mention">@Aqil</span></div>
+      <img src="post.jpg" alt="">
+      <div class="reacts"><span>❤️ 2</span><span>🔥 1</span>&nbsp;3 komentar</div>
+      <div class="cm"><div class="av a1 sm">F</div><div><b>Fitria Azzahra Kurnia</b>Warna oranyenya cakep kak!</div></div>
+      <div class="cm"><div class="av a3 sm">A</div><div><b>Athallah</b>Cover-nya aku bikin versi gelap juga ya <span class="mention">@Ray</span></div></div>
+    </div>
+    <p class="ro">Membalas dan memberi reaksi lewat aplikasi di laptop.</p>
+  </div>
+</section>
+
+<!-- 5. Push di layar kunci -->
+<section class="screen lock" id="lock">
+  <div class="status"><span></span><span>5G ▮▮▮ 87%</span></div>
+  <div class="clock"><b>21.56</b><span>Rabu, 25 November</span></div>
+  <div style="flex:1"></div>
+  <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:120px">
+    <div class="push"><img src="logo.png" alt=""><div class="t"><small>sekarang</small><b>Creative AAB</b>Request baru dari ARIL SULAEMAN untuk Athallah: Banner Shopee 12.12 ukuran story. Perlu approval.</div></div>
+    <div class="push"><img src="logo.png" alt=""><div class="t"><small>5 mnt lalu</small><b>Creative AAB</b>Fitria menandai kamu: “Cover-nya sudah aku upload ya @Ray”</div></div>
+  </div>
+</section>
+
+<!-- 6. Akun: notifikasi push -->
+<section class="screen" id="akun">
+  <div class="status"><span>21.57</span><span>5G ▮▮▮ 87%</span></div>
+  <div class="top"><h1>Akun</h1></div>
+  <div class="scroll">
+    <div class="glass" style="padding:14px;display:flex;gap:12px;align-items:center"><div class="av a5">R</div><div><b>Ray Sangkhylang</b><div style="color:var(--ink2);font-size:13px">Creative Lead · @ray</div></div></div>
+    <div class="sec">NOTIFIKASI DI HP INI</div>
+    <div class="glass toggle"><span>Tag dan komentar</span><span class="sw"></span></div>
+    <div class="glass toggle"><span>Request baru (khusus Ray)</span><span class="sw"></span></div>
+    <div class="glass toggle"><span>Keputusan EP</span><span class="sw"></span></div>
+    <div class="glass toggle"><span>Reaksi</span><span class="sw off"></span></div>
+    <p class="hint">Di iPhone, notifikasi hanya jalan setelah aplikasi dipasang lewat Share → Add to Home Screen.</p>
+    <div class="glass" style="padding:14px;color:var(--warn);text-align:center">Keluar</div>
+  </div>
+  <nav class="tabbar">
+    <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/></svg>Notifikasi<b>3</b></span>
+    <span class="tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.5l4.5 4.5L19 7"/></svg>Approval<b>4</b></span>
+    <span class="tab on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>Akun</span>
+  </nav>
+</section>
+
+<script>
+let id = new URLSearchParams(location.search).get("s") || location.hash.slice(1) || "notif";
+if (id === "eprev") id = "ep"; else document.querySelectorAll(".rev").forEach((e) => e.remove());
+document.getElementById(id).classList.add("on");
+</script>
+</body></html>
