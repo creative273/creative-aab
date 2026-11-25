@@ -74,6 +74,13 @@ Widget otomatis terbuka saat Windows menyala. Tombol − menyembunyikannya ke tr
 - **Pengaturan → Tampilan** (per laptop): warna aksen (7 pilihan atau warna bebas), transparansi kaca, mode terang, efek kaca Windows 11 (wallpaper terlihat buram di belakang jendela; di Windows 10 memakai latar gradasi), dan pilihan membuka sebagai jendela penuh saat Windows menyala. Pop-up ikut warna aksen.
 - **Foto profil:** Pengaturan → Ganti foto. Foto dipotong bulat, dikompres kecil, disimpan di server, dan terlihat oleh seluruh tim di sidebar, kartu KPI, dan aktivitas.
 
+## Timeline, profil tim, dan tema penuh (versi 1.5)
+
+- **Timeline** (semua akun, jendela penuh): tulis kabar dengan teks dan foto, beri reaksi (Suka, Love, Haha, Wow, Keren), dan komentar. Kejadian dari widget ikut muncul otomatis: konten baru di KPI, hasil design dan video, input AIGC, keputusan request, OKE atau revisi EP, dan POSTED. Postingan dan komentar bisa dihapus pemiliknya atau Ray. Menu Timeline menampilkan tanda **Baru** kalau ada kabar yang belum dibaca.
+- **Profil tim**: kartu semua anggota. Klik nama atau foto siapa saja (di Timeline juga) untuk membuka profilnya: foto besar, sampul, jabatan, bio, dan aktivitas orang itu. Di profil sendiri ada **Edit profil** untuk mengganti jabatan, bio, dan foto sampul.
+- **Warna latar dan kartu** (Pengaturan): geser ke kanan supaya sidebar, kartu, dan latar ikut warna aksen. Geser ke kiri untuk tampilan netral seperti versi 1.3.
+- Timeline menyimpan 300 item terakhir. Foto postingan dikompres otomatis.
+
 ## Akun dan akses
 
 | Akun | Akses |
