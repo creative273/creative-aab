@@ -451,7 +451,7 @@ function contentForm() {
       <button class="btn secondary" data-act="resetBulk">Batal</button>`;
   }
   return `<h2>Konten baru dari Instagram</h2>
-    <p class="hint">Angka konten yang sudah ada di sheet diperbarui otomatis tiap 3 jam. Ambil daftar postingan bulan ini yang belum ada di sheet, lalu isi nama konten dan pillar.</p>
+    <p class="hint">Angka konten yang sudah ada di sheet diperbarui otomatis tiap 4 jam. Ambil daftar postingan bulan ini yang belum ada di sheet, lalu isi nama konten dan pillar.</p>
     <button class="btn" data-act="fromIg" ${f.parsing ? "disabled" : ""}>${f.parsing ? "Mengambil dari Instagram…" : "Ambil postingan baru"}</button>
     <div class="section"></div>
     <h2>Atau upload file Anak Bangsa Tools</h2>
@@ -1808,7 +1808,7 @@ function igView() {
         <tbody>${media.map((m) => `<tr><td><a href="${esc(m.permalink)}" target="_blank" rel="noopener">${esc((m.caption || "(tanpa caption)").slice(0, 60))}</a><small>${esc(m.kategori)}</small></td>
           <td>${esc(fmtDate(isoDay(new Date(m.timestamp))))}</td><td>${nf(m.views)}</td><td>${nf(m.reach)}</td><td>${nf(m.likes)}</td><td>${nf(m.comments)}</td><td>${nf(m.shares)}</td><td>${nf(m.saved)}</td></tr>`).join("")}</tbody>
       </table></div>
-      <p class="hint">${ui.ig.sheetSyncAt ? `Angka konten yang sudah ada di blok CONTENT ikut diperbarui otomatis tiap 3 jam (terakhir ${esc(ago(new Date(ui.ig.sheetSyncAt).toISOString()))}).` : "Angka di blok CONTENT diperbarui otomatis tiap 3 jam."}</p>
+      <p class="hint">${ui.ig.sheetSyncAt ? `Angka konten yang sudah ada di blok CONTENT ikut diperbarui otomatis tiap 4 jam (terakhir ${esc(ago(new Date(ui.ig.sheetSyncAt).toISOString()))}).` : "Angka di blok CONTENT diperbarui otomatis tiap 4 jam."}</p>
     </section>
   </div>`;
 }
