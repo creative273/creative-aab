@@ -451,7 +451,7 @@ function contentForm() {
       <button class="btn secondary" data-act="resetBulk">Batal</button>`;
   }
   return `<h2>Konten baru dari Instagram</h2>
-    <p class="hint">Angka konten yang sudah ada di sheet diperbarui otomatis tiap jam. Ambil daftar postingan baru, lalu isi nama konten dan pillar.</p>
+    <p class="hint">Angka konten yang sudah ada di sheet diperbarui otomatis tiap jam. Ambil daftar postingan bulan ini yang belum ada di sheet, lalu isi nama konten dan pillar.</p>
     <button class="btn" data-act="fromIg" ${f.parsing ? "disabled" : ""}>${f.parsing ? "Mengambil dari Instagram…" : "Ambil postingan baru"}</button>
     <div class="section"></div>
     <h2>Atau upload file Anak Bangsa Tools</h2>
@@ -471,7 +471,7 @@ function bindContent() {
       const res = await api("/api/ig/new");
       ui.form = res.items.length
         ? { preview: res.items.map((r) => ({ ...r, exists: false, judul: "", pillar: "" })), fileName: `${res.items.length} postingan baru dari Instagram` }
-        : { msg: "Tidak ada postingan baru. Semua postingan 45 hari terakhir sudah ada di sheet.", msgType: "ok" };
+        : { msg: "Tidak ada postingan baru. Semua postingan bulan ini sudah ada di sheet.", msgType: "ok" };
     } catch (e) { ui.form = { msg: e.message, msgType: "err" }; }
     render();
   });
@@ -1771,7 +1771,10 @@ function igView() {
   const vals = days14.map((x) => (d[x] || {}).views || 0);
   const max = Math.max(1, ...vals);
   const media = (a.media || []).slice().sort((x, y) => Date.parse(y.timestamp) - Date.parse(x.timestamp));
-  const recent = media.filter((m) => Date.parse(m.timestamp) >= Date.now() - (ui.igRange === 30 ? 30 : 7) * 864e5);
+  const range = ui.igRange || "7";
+  const now = new Date();
+  const since = range === "bulan" ? new Date(now.getFullYear(), now.getMonth(), 1).getTime() : Date.now() - (range === "30" ? 30 : 7) * 864e5;
+  const recent = media.filter((m) => Date.parse(m.timestamp) >= since);
   const top = recent.slice().sort((x, y) => (y.views ?? y.reach ?? 0) - (x.views ?? x.reach ?? 0)).slice(0, 6);
   const upd = a.updatedAt ? new Date(a.updatedAt) : null;
   return `<div class="home">
@@ -1791,7 +1794,7 @@ function igView() {
       </section>
       <section class="box glass">
         <h2>Konten terbaik
-          <span class="seg mini-seg" role="group" aria-label="Rentang">${[7, 30].map((n) => `<button data-igrange="${n}" aria-pressed="${(ui.igRange || 7) === n}">${n} hari</button>`).join("")}</span></h2>
+          <span class="seg mini-seg" role="group" aria-label="Rentang">${[["7", "7 hari"], ["30", "30 hari"], ["bulan", "Bulan ini"]].map(([k, l]) => `<button data-igrange="${k}" aria-pressed="${range === k}">${l}</button>`).join("")}</span></h2>
         ${top.length ? `<ol class="top-list">${top.map((m) => `<li><a href="${esc(m.permalink)}" target="_blank" rel="noopener">
             ${m.thumb ? `<img src="${esc(m.thumb)}" alt="" loading="lazy">` : `<span class="no-thumb"></span>`}
             <span class="top-cap">${esc(m.caption || "(tanpa caption)")}<small>${esc(fmtDate(isoDay(new Date(m.timestamp))))} · ${esc(m.kategori)}</small></span>
@@ -1816,7 +1819,7 @@ function bindIg() {
   on("igRetry", () => loadIg());
   on("igSync", () => { ui.ig = null; render(); loadIg({ sync: true }); });
   document.querySelectorAll("[data-igacc]").forEach((b) => b.addEventListener("click", () => { ui.igAcc = b.dataset.igacc; render(); }));
-  document.querySelectorAll("[data-igrange]").forEach((b) => b.addEventListener("click", () => { ui.igRange = +b.dataset.igrange; render(); }));
+  document.querySelectorAll("[data-igrange]").forEach((b) => b.addEventListener("click", () => { ui.igRange = b.dataset.igrange; render(); }));
   if (!ui.ig && !ui.igErr && !ui.igLoading) { ui.igLoading = true; loadIg().finally(() => { ui.igLoading = false; }); }
 }
 
@@ -1827,16 +1830,17 @@ function igSettings() {
   if (!g) return `<div class="section"><h2>Instagram</h2><p class="hint">Memuat…</p></div>`;
   return `<div class="section">
     <h2>Instagram</h2>
-    <p class="hint">Tempel token dari Meta for Developers (Instagram → API setup with Instagram login → Generate token). Token disimpan di server dan diperpanjang otomatis. Jangan kirim token lewat chat.</p>
+    <p class="hint">Tempel token dari Meta for Developers (Instagram API → API setup with Unified login → Buat token akses). Token disimpan di server, tidak dikirim ke laptop tim. Jangan kirim token lewat chat.</p>
     ${IG_ACCS.map((acc) => {
       const a = g.accounts[acc] || {};
       const exp = a.expiresAt ? new Date(a.expiresAt) : null;
       return `<div class="ig-conn">
         <div class="ig-conn-head"><b>${acc}</b>${a.connected ? `<span class="pill done">@${esc(a.username)}</span>` : `<span class="pill wait">Belum terhubung</span>`}
           ${a.connected ? `<button class="linklike" data-igoff="${acc}">Lepas</button>` : ""}</div>
-        ${a.connected && exp ? `<p class="hint">Token berlaku sampai ${exp.getDate()} ${BULAN_PANJANG[exp.getMonth()]} ${exp.getFullYear()}, diperpanjang otomatis.${a.error ? ` Error terakhir: ${esc(a.error)}` : ""}</p>` : ""}
+        ${a.connected ? `<p class="hint">${exp ? `Token berlaku sampai ${exp.getDate()} ${BULAN_PANJANG[exp.getMonth()]} ${exp.getFullYear()}, diperpanjang otomatis.` : "Token tidak kedaluwarsa."}${a.error ? ` Error terakhir: ${esc(a.error)}` : ""}</p>` : ""}
         <div class="row-link"><input type="password" id="igTok-${acc}" value="${esc(f["igTok-" + acc] || "")}" placeholder="${a.connected ? "Tempel token baru untuk mengganti" : "Tempel token akun " + acc}" autocomplete="off">
           <button class="btn inline" data-igon="${acc}" ${f.igBusy === acc ? "disabled" : ""}>${f.igBusy === acc ? "Mengecek…" : "Hubungkan"}</button></div>
+        ${f.igMsgAcc === acc && f.igMsg ? `<p class="msg ${f.igMsgType}" role="status">${esc(f.igMsg)}</p>` : ""}
       </div>`;
     }).join("")}
   </div>`;
@@ -1849,18 +1853,19 @@ function bindIgSettings() {
   document.querySelectorAll("[data-igon]").forEach((b) => b.addEventListener("click", async () => {
     const acc = b.dataset.igon;
     const token = (ui.form[`igTok-${acc}`] || "").trim();
-    if (!token) return setMsg(`Tempel token akun ${acc} dulu.`, "err");
-    ui.form.igBusy = acc; render();
+    if (!token) { Object.assign(ui.form, { igMsgAcc: acc, igMsg: `Tempel token akun ${acc} dulu.`, igMsgType: "err" }); return render(); }
+    Object.assign(ui.form, { igBusy: acc, igMsg: "" }); render();
     try {
       const r = await api("/api/ig/connect", { account: acc, token });
-      ui.form = { msg: `${acc} terhubung ke @${r.username} (${nf(r.followers)} followers).`, msgType: "ok" };
+      ui.form = { igMsgAcc: acc, igMsg: `Terhubung ke @${r.username} (${nf(r.followers)} followers).`, igMsgType: "ok" };
       await loadIg();
-    } catch (e) { ui.form.igBusy = ""; ui.form.msg = e.message; ui.form.msgType = "err"; }
+    } catch (e) { Object.assign(ui.form, { igBusy: "", igMsgAcc: acc, igMsg: e.message, igMsgType: "err" }); }
     render();
   }));
   document.querySelectorAll("[data-igoff]").forEach((b) => b.addEventListener("click", async () => {
-    try { await api("/api/ig/disconnect", { account: b.dataset.igoff }); ui.form = { msg: `${b.dataset.igoff} dilepas.`, msgType: "ok" }; await loadIg(); }
-    catch (e) { ui.form = { msg: e.message, msgType: "err" }; }
+    const acc = b.dataset.igoff;
+    try { await api("/api/ig/disconnect", { account: acc }); ui.form = { igMsgAcc: acc, igMsg: `${acc} dilepas.`, igMsgType: "ok" }; await loadIg(); }
+    catch (e) { ui.form = { igMsgAcc: acc, igMsg: e.message, igMsgType: "err" }; }
     render();
   }));
 }

@@ -1261,10 +1261,16 @@ export function weekPlan(rows, todayISO) {
 }
 
 // ---------- Instagram (v1.4) ----------
-// Instagram API with Instagram Login (graph.instagram.com). Token akun disimpan di KV oleh Ray lewat widget,
-// diperpanjang otomatis sebelum habis (berlaku 60 hari). Paket gratis Cloudflare membatasi 50 subrequest per
+// Dua jenis token diterima:
+// - token login Instagram (diawali IG, graph.instagram.com), berlaku 60 hari dan diperpanjang otomatis;
+// - token Login Terpadu / pengguna sistem (diawali EAA, graph.facebook.com ke ID akun IG), tidak kedaluwarsa.
+// Token disimpan di KV oleh Ray lewat widget dan tidak pernah dikirim ke laptop tim. Paket gratis Cloudflare membatasi 50 subrequest per
 // jalan, jadi tiap cron hanya memperbarui sebagian konten (bergiliran).
 const IG_HOST = "https://graph.instagram.com";
+const FB_HOST = "https://graph.facebook.com";
+// ID akun IG dari halaman Meta (API setup with Unified login). Bukan rahasia; dipakai kalau token EAA tidak menyebut akunnya.
+const IG_DEFAULT_IDS = { AAB: "17841471637263858", NUSANTARA: "17841474840408535" };
+const isFbToken = (token) => /^EAA/.test(token);
 const IG_VER = "v25.0";
 export const IG_ACCOUNTS = ["AAB", "NUSANTARA"];
 const IG_MEDIA_PER_RUN = 6;
@@ -1274,10 +1280,13 @@ const IG_KEEP_DAYS = 90;
 const IG_MEDIA_DAYS = 60;
 const IG_SHEET_EVERY_MS = 60 * 60 * 1000;
 
-async function ig(path, token, params = {}) {
-  const u = new URL(`${IG_HOST}/${path.startsWith("refresh_access_token") ? "" : IG_VER + "/"}${path}`);
+// t: { token, kind: "ig" | "fb", igId }. Untuk token fb, "me" dan "me/..." diarahkan ke ID akun IG.
+async function ig(path, t, params = {}) {
+  const fb = t.kind === "fb";
+  const p = fb && t.igId ? path.replace(/^me(?=\/|$)/, t.igId) : path;
+  const u = new URL(`${fb ? FB_HOST : IG_HOST}/${p.startsWith("refresh_access_token") ? "" : IG_VER + "/"}${p}`);
   Object.entries(params).forEach(([k, v]) => u.searchParams.set(k, v));
-  u.searchParams.set("access_token", token);
+  u.searchParams.set("access_token", t.token);
   const res = await fetch(u.toString());
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) {
@@ -1300,15 +1309,42 @@ async function igConnect(env, body) {
   if (!IG_ACCOUNTS.includes(account)) throw fail("Pilih akun AAB atau NUSANTARA.");
   const token = clean(body.token);
   if (!/^[A-Za-z0-9_\-|.]{40,}$/.test(token)) throw fail("Token tidak dikenali. Salin ulang token dari halaman Meta for Developers.");
-  const me = await ig("me", token, { fields: "user_id,username,account_type,followers_count,media_count" });
+  let me, rec;
+  if (isFbToken(token)) {
+    ({ me, rec } = await igFindFbAccount(token, account, clean(body.igId)));
+  } else {
+    me = await ig("me", { token, kind: "ig" }, { fields: "user_id,username,account_type,followers_count,media_count" });
+    rec = { token, kind: "ig", userId: String(me.user_id || me.id), refreshedAt: Date.now(), expiresAt: Date.now() + 60 * 864e5 };
+  }
   const tokens = await igTokens(env);
-  const other = Object.entries(tokens).find(([k, v]) => k !== account && v.userId === String(me.user_id || me.id));
+  const other = Object.entries(tokens).find(([k, v]) => k !== account && v.userId === rec.userId);
   if (other) throw fail(`Token ini milik @${me.username}, yang sudah terhubung sebagai ${other[0]}.`);
-  tokens[account] = { token, userId: String(me.user_id || me.id), username: me.username, setAt: Date.now(), refreshedAt: Date.now(), expiresAt: Date.now() + 60 * 864e5 };
+  tokens[account] = { ...rec, username: me.username, setAt: Date.now() };
   await env.STORE.put("ig:accounts", JSON.stringify(tokens));
   await env.STORE.delete(`ig:data:${account}`);
   await igSyncAccount(env, account, tokens[account], { force: true });
   return { ok: true, account, username: me.username, accountType: me.account_type, followers: me.followers_count };
+}
+
+// Token EAA: cari ID akun IG yang bisa dibuka token ini. Urutan: ID dari widget, ID bawaan akun, lalu Halaman FB yang tertaut.
+async function igFindFbAccount(token, account, igId) {
+  const fields = "id,username,followers_count,media_count";
+  const tried = new Set();
+  const tryId = async (id) => {
+    if (!id || tried.has(id)) return null;
+    tried.add(id);
+    try { return await ig(id, { token, kind: "fb" }, { fields }); } catch (e) { if (e.status === 409 && /OAuth|token/i.test(e.message) && !/permission|object/i.test(e.message)) throw e; return null; }
+  };
+  let me = (await tryId(igId)) || (await tryId(IG_DEFAULT_IDS[account]));
+  if (!me) {
+    const pages = await ig("me/accounts", { token, kind: "fb" }, { fields: "instagram_business_account{id,username}" }).catch(() => ({ data: [] }));
+    for (const pg of pages.data || []) {
+      const iba = pg.instagram_business_account;
+      if (iba && (me = await tryId(iba.id))) break;
+    }
+  }
+  if (!me) throw fail(`Token diterima, tapi akun Instagram ${account} tidak bisa dibuka dengan token ini. Pastikan token dibuat di baris akun ${account}.`);
+  return { me, rec: { token, kind: "fb", igId: String(me.id), userId: String(me.id), refreshedAt: Date.now(), expiresAt: null } };
 }
 
 async function igDisconnect(env, body) {
@@ -1322,14 +1358,14 @@ async function igDisconnect(env, body) {
 
 const kategoriOf = (m) => (m.media_product_type === "REELS" || m.media_type === "VIDEO" ? "Reels/VT" : m.media_type === "CAROUSEL_ALBUM" ? "Carousel" : "Feed");
 
-async function igMediaInsights(token, m) {
+async function igMediaInsights(t, m) {
   const want = m.type === "CAROUSEL_ALBUM" ? ["reach", "likes", "comments", "shares", "saved", "views"] : ["views", "reach", "likes", "comments", "shares", "saved"];
   let data;
   try {
-    data = await ig(`${m.id}/insights`, token, { metric: want.join(",") });
+    data = await ig(`${m.id}/insights`, t, { metric: want.join(",") });
   } catch (e) {
     // Sebagian tipe konten tidak punya metrik views: ulangi tanpa views.
-    data = await ig(`${m.id}/insights`, token, { metric: want.filter((x) => x !== "views").join(",") });
+    data = await ig(`${m.id}/insights`, t, { metric: want.filter((x) => x !== "views").join(",") });
   }
   const out = {};
   for (const d of data.data || []) out[d.name] = (d.values && d.values[0] && d.values[0].value) ?? (d.total_value && d.total_value.value) ?? 0;
@@ -1345,12 +1381,12 @@ async function igSyncAccount(env, account, t, { force = false } = {}) {
   const now = Date.now();
   const today = wibDay(now);
   if (force || !data.profileAt || now - data.profileAt > IG_PROFILE_EVERY_MS) {
-    const me = await ig("me", t.token, { fields: "username,followers_count,media_count,profile_picture_url" });
+    const me = await ig("me", t, { fields: "username,followers_count,media_count,profile_picture_url" });
     data.followers = me.followers_count || 0;
     data.mediaCount = me.media_count || 0;
     data.picture = me.profile_picture_url || "";
     data.username = me.username;
-    const list = await ig("me/media", t.token, { fields: "id,caption,media_type,media_product_type,permalink,shortcode,timestamp,thumbnail_url,media_url,like_count,comments_count", limit: "50" });
+    const list = await ig("me/media", t, { fields: "id,caption,media_type,media_product_type,permalink,shortcode,timestamp,thumbnail_url,media_url,like_count,comments_count", limit: "50" });
     const old = new Map((data.media || []).map((m) => [m.id, m]));
     const cutoff = now - IG_MEDIA_DAYS * 864e5;
     data.media = (list.data || [])
@@ -1370,7 +1406,7 @@ async function igSyncAccount(env, account, t, { force = false } = {}) {
       if (day !== today && data.daily[day] && data.daily[day].final) continue;
       const since = wibDayStart(day);
       const until = Math.min(since + 86400, Math.floor(now / 1000));
-      const ins = await ig("me/insights", t.token, { metric: "views,reach,total_interactions,accounts_engaged", period: "day", metric_type: "total_value", since: String(since), until: String(until) }).catch(() => null);
+      const ins = await ig("me/insights", t, { metric: "views,reach,total_interactions,accounts_engaged", period: "day", metric_type: "total_value", since: String(since), until: String(until) }).catch(() => null);
       const row = data.daily[day] || {};
       for (const d of (ins && ins.data) || []) row[d.name] = (d.total_value && d.total_value.value) || 0;
       if (day === today) row.followers = data.followers;
@@ -1389,7 +1425,7 @@ async function igSyncAccount(env, account, t, { force = false } = {}) {
     .slice(0, force ? 10 : IG_MEDIA_PER_RUN);
   for (const m of queue) {
     try {
-      const s = await igMediaInsights(t.token, m);
+      const s = await igMediaInsights(t, m);
       Object.assign(m, { views: s.views ?? m.views, reach: s.reach ?? m.reach, likes: s.likes ?? m.likes, comments: s.comments ?? m.comments, shares: s.shares ?? m.shares, saved: s.saved ?? m.saved, insightsAt: now });
     } catch (e) {
       m.insightsAt = now; // jangan diulang terus kalau Instagram menolak satu konten
@@ -1409,9 +1445,10 @@ async function igSyncAccount(env, account, t, { force = false } = {}) {
 async function igRefreshTokens(env, tokens) {
   let changed = false;
   for (const [acc, t] of Object.entries(tokens)) {
+    if (t.kind === "fb" || !t.expiresAt) continue; // token pengguna sistem tidak kedaluwarsa
     if (t.expiresAt - Date.now() > 15 * 864e5 || Date.now() - t.refreshedAt < 864e5) continue;
     try {
-      const r = await ig("refresh_access_token", t.token, { grant_type: "ig_refresh_token" });
+      const r = await ig("refresh_access_token", { ...t, kind: "ig" }, { grant_type: "ig_refresh_token" });
       t.token = r.access_token;
       t.refreshedAt = Date.now();
       t.expiresAt = Date.now() + (r.expires_in || 60 * 86400) * 1000;
@@ -1508,7 +1545,9 @@ async function igNewPosts(env) {
   const cfg = await getConfig(env);
   const media = await igAllMedia(env);
   const { byCode } = await readContent(env, cfg);
-  const cutoff = Date.now() - 45 * 864e5;
+  // Hanya postingan bulan berjalan (WIB): sheet KPI dibuat per bulan.
+  const w = new Date(Date.now() + 7 * 3600 * 1000);
+  const cutoff = Date.UTC(w.getUTCFullYear(), w.getUTCMonth(), 1) - 7 * 3600 * 1000;
   const items = [...media.values()]
     .filter((m) => !byCode.has(m.code) && Date.parse(m.timestamp) >= cutoff)
     .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
