@@ -80,6 +80,7 @@ Widget otomatis terbuka saat Windows menyala. Tombol − menyembunyikannya ke tr
 - **Profil tim**: kartu semua anggota. Klik nama atau foto siapa saja (di Timeline juga) untuk membuka profilnya: foto besar, sampul, jabatan, bio, dan aktivitas orang itu. Di profil sendiri ada **Edit profil** untuk mengganti jabatan, bio, dan foto sampul.
 - **Warna latar dan kartu** (Pengaturan): geser ke kanan supaya sidebar, kartu, dan latar ikut warna aksen. Geser ke kiri untuk tampilan netral seperti versi 1.3.
 - Timeline menyimpan 300 item terakhir. Foto postingan dikompres otomatis.
+- **Tag dan notifikasi (versi 1.5.1)**: ketik `@` di postingan atau komentar, lalu pilih nama dari daftar (panah atas/bawah lalu Enter, atau klik). Orang yang ditag, pemilik postingan yang dikomentari, orang yang sudah ikut berkomentar, dan pemilik postingan yang diberi reaksi mendapat notifikasi. Lonceng di kanan atas menampilkan jumlah yang belum dibaca. Klik satu notifikasi untuk membuka postingannya. Notifikasi baru juga muncul sebagai pop-up di pojok layar (dicek tiap 1 menit).
 
 ## Akun dan akses
 

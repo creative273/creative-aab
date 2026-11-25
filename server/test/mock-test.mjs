@@ -556,4 +556,48 @@ assert.equal(r.data.image, png);
 assert.equal((await call("POST", "/api/me/profile", { cover: "" }, T.zahra)).status, 200);
 assert.equal((await call("GET", "/api/profile/cover?u=zahra", null, T.aqil)).status, 404);
 
+// 20. Notifikasi dan tag (v1.5.1)
+const unread = async (t) => (await call("GET", "/api/notif", null, t)).data;
+await call("POST", "/api/notif/read", {}, T.zahra); await call("POST", "/api/notif/read", {}, T.aqil); await call("POST", "/api/notif/read", {}, T.albar2);
+r = await call("POST", "/api/feed/post", { text: "Ide konten baru, gimana @aqil? cc @zahra." }, T.albar2);
+const np = r.data.item.id;
+let nz = await unread(T.zahra);
+assert.equal(nz.unread, 1); assert.equal(nz.items[0].type, "mention"); assert.equal(nz.items[0].by, "albar2"); assert.equal(nz.items[0].postId, np);
+assert.equal((await unread(T.aqil)).unread, 1);
+// tag ke username yang tidak ada diabaikan, tag diri sendiri tidak memberi notifikasi
+await call("POST", "/api/feed/comment", { id: np, text: "@albar2 @tidakada boleh" }, T.albar2);
+assert.equal((await unread(T.albar2)).unread, 0);
+// komentar: pemilik dapat "comment", yang sudah berkomentar dapat "reply"
+await call("POST", "/api/feed/comment", { id: np, text: "Setuju!" }, T.zahra);
+let na = await unread(T.albar2);
+assert.equal(na.unread, 1); assert.equal(na.items[0].type, "comment"); assert.equal(na.items[0].by, "zahra");
+await call("POST", "/api/feed/comment", { id: np, text: "Aku desain cover ya @zahra" }, T.aqil);
+nz = await unread(T.zahra);
+assert.equal(nz.items[0].type, "mention", "tag didahulukan daripada balasan");
+assert.equal(nz.unread, 2, "satu notifikasi per kejadian");
+na = await unread(T.albar2);
+assert.equal(na.items[0].type, "comment"); assert.equal(na.unread, 2);
+// reaksi: hanya saat memberi reaksi baru
+await call("POST", "/api/feed/react", { id: np, reaction: "love" }, T.zahra);
+await call("POST", "/api/feed/react", { id: np, reaction: "fire" }, T.zahra);
+await call("POST", "/api/feed/react", { id: np, reaction: "fire" }, T.zahra);
+na = await unread(T.albar2);
+assert.equal(na.items.filter((n) => n.type === "react").length, 1); assert.equal(na.items[0].reaction, "love");
+// state membawa jumlah belum dibaca, tandai dibaca satu dan semua
+r = await call("GET", "/api/state", null, T.albar2);
+assert.equal(r.data.notifUnread, 3);
+r = await call("POST", "/api/notif/read", { id: na.items[0].id }, T.albar2);
+assert.equal(r.data.unread, 2);
+r = await call("POST", "/api/notif/read", {}, T.albar2);
+assert.equal(r.data.unread, 0);
+// buka satu postingan dari notifikasi
+r = await call("GET", `/api/feed/item?id=${np}`, null, T.zahra);
+assert.equal(r.data.item.comments.length, 3);
+// tag baru saat edit
+await call("POST", "/api/notif/read", {}, T.zahra);
+await call("POST", "/api/feed/edit", { id: np, text: "Ide konten baru, gimana @aqil? cc @zahra. @ray juga" }, T.albar2);
+assert.equal((await unread(T.zahra)).unread, 0, "tag lama tidak dikirim ulang");
+r = await call("GET", "/api/notif");
+assert.ok(r.data.items.some((n) => n.type === "mention" && n.by === "albar2"));
+
 console.log("SEMUA TES LULUS. Panggilan Lark tiruan:", calls.length);
