@@ -472,5 +472,20 @@ for (let run = 0; run < 4; run++) {
 }
 nus = JSON.parse(kv.get("ig:data:NUSANTARA"));
 assert.equal(nus.media.filter((m) => m.views === null).length, 1, "semua konten terisi kecuali yang ditolak Instagram");
+assert.match(nus.media.find((m) => m.id === "b2").insightError, /business conversion/);
+// Banyak konten ditolak: pesannya tampil di Insight
+const dd = JSON.parse(kv.get("ig:data:NUSANTARA"));
+dd.media.slice(0, 3).forEach((m) => { m.views = null; m.reach = null; m.insightError = "Instagram: (#10) contoh"; });
+kv.set("ig:data:NUSANTARA", JSON.stringify(dd));
+r = await call("GET", "/api/ig", null, T.aqil);
+assert.match(r.data.accounts.NUSANTARA.error, /Insight \d+ konten ditolak Instagram/);
+// Konten lama tanpa angka (sisa sinkron sebelumnya) langsung diambil di cron berikutnya walau baru dicoba
+const d3 = JSON.parse(kv.get("ig:data:NUSANTARA"));
+d3.media.forEach((m) => { m.insightError = ""; m.insightsAt = Date.now(); });
+d3.media.slice(20, 24).forEach((m) => { m.views = null; m.reach = null; });
+kv.set("ig:data:NUSANTARA", JSON.stringify(d3));
+await worker.scheduled({}, env, { waitUntil: (p) => p });
+await new Promise((res) => setTimeout(res, 50));
+assert.equal(JSON.parse(kv.get("ig:data:NUSANTARA")).media.slice(20, 24).filter((m) => m.views === null).length, 0, "konten kosong didahulukan");
 
 console.log("SEMUA TES LULUS. Panggilan Lark tiruan:", calls.length);

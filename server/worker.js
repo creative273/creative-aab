@@ -1413,7 +1413,7 @@ async function igSyncAccount(env, account, tok, { force = false } = {}) {
           caption: clean(m.caption).slice(0, 160), type: m.media_type, product: m.media_product_type, kategori: kategoriOf(m),
           timestamp: m.timestamp, thumb: m.thumbnail_url || (m.media_type === "IMAGE" ? m.media_url : "") || "",
           likes: m.like_count ?? o.likes ?? 0, comments: m.comments_count ?? o.comments ?? 0,
-          views: o.views ?? null, reach: o.reach ?? null, shares: o.shares ?? null, saved: o.saved ?? null, insightsAt: o.insightsAt || 0,
+          views: o.views ?? null, reach: o.reach ?? null, shares: o.shares ?? null, saved: o.saved ?? null, insightsAt: o.insightsAt || 0, insightError: o.insightError || "",
         };
       });
     // Insight akun hari ini dan kemarin (kemarin final setelah lewat tengah malam WIB).
@@ -1434,18 +1434,29 @@ async function igSyncAccount(env, account, tok, { force = false } = {}) {
   }
   // Insight per konten, bergiliran: konten seminggu terakhir didahulukan.
   const week = now - 7 * 864e5;
+  // Urutan: konten yang belum pernah punya angka (terbaru dulu), lalu konten seminggu terakhir, lalu yang paling lama tidak diperbarui.
+  // Konten yang ditolak Instagram dicoba lagi setelah 6 jam. Sinkron manual tidak mengulang yang baru diperbarui 10 menit terakhir.
+  const empty = (m) => m.views === null && m.reach === null;
+  const due = (m) => {
+    const age = now - (m.insightsAt || 0);
+    if (m.insightError) return age > 6 * 3600 * 1000;
+    if (force) return age > 10 * 60 * 1000;
+    return empty(m) || age > IG_MEDIA_FRESH_MS;
+  };
   const queue = (data.media || [])
-    .filter((m) => force || now - (m.insightsAt || 0) > IG_MEDIA_FRESH_MS)
-    .sort((a, b) => (Date.parse(b.timestamp) >= week) - (Date.parse(a.timestamp) >= week) || (a.insightsAt || 0) - (b.insightsAt || 0))
+    .filter(due)
+    .sort((a, b) => empty(b) - empty(a) || (empty(a) && empty(b) ? Date.parse(b.timestamp) - Date.parse(a.timestamp) : 0) ||
+      (Date.parse(b.timestamp) >= week) - (Date.parse(a.timestamp) >= week) || (a.insightsAt || 0) - (b.insightsAt || 0))
     .slice(0, force ? 20 : IG_MEDIA_PER_RUN);
   for (const m of queue) {
     try {
       const s = await igMediaInsights(t, m);
-      Object.assign(m, { views: s.views ?? m.views, reach: s.reach ?? m.reach, likes: s.likes ?? m.likes, comments: s.comments ?? m.comments, shares: s.shares ?? m.shares, saved: s.saved ?? m.saved, insightsAt: now });
+      Object.assign(m, { views: s.views ?? m.views, reach: s.reach ?? m.reach, likes: s.likes ?? m.likes, comments: s.comments ?? m.comments, shares: s.shares ?? m.shares, saved: s.saved ?? m.saved, insightsAt: now, insightError: "" });
     } catch (e) {
       if (e.budget) break; // jatah habis: sisanya dilanjutkan jalan berikutnya
       if (e.igCode === 190) throw e; // token bermasalah: berhenti dan tampilkan error
       m.insightsAt = now; // jangan diulang terus kalau Instagram menolak satu konten
+      m.insightError = String(e.message || "").slice(0, 200);
     }
   }
   data.updatedAt = now;
@@ -1532,6 +1543,12 @@ async function igSheetSync(env, { force = false } = {}) {
   return { updated: ranges.length };
 }
 
+// Kalau banyak konten ditolak Instagram, tampilkan satu contoh pesannya supaya penyebabnya kelihatan.
+function insightProblem(d) {
+  const bad = ((d && d.media) || []).filter((m) => m.insightError && m.views === null && m.reach === null);
+  return bad.length >= 3 ? `Insight ${bad.length} konten ditolak Instagram: ${bad[0].insightError}` : "";
+}
+
 // Untuk halaman Insight IG (semua akun boleh lihat).
 async function igOverview(env) {
   const tokens = await igTokens(env);
@@ -1543,7 +1560,7 @@ async function igOverview(env) {
     accounts[acc] = {
       connected: !!t,
       username: (d && d.username) || (t && t.username) || "",
-      error: (t && t.error) || "",
+      error: (t && t.error) || insightProblem(d),
       expiresAt: t ? t.expiresAt : null,
       followers: d ? d.followers : null,
       mediaCount: d ? d.mediaCount : null,
