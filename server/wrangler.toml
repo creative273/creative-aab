@@ -1,0 +1,17 @@
+# Konfigurasi Cloudflare Worker untuk auto-deploy lewat GitHub Actions (v1.7).
+# Tidak ada rahasia di file ini. ID KV namespace disuntikkan workflow dari secret
+# CLOUDFLARE_KV_ID saat deploy. Variabel dan secret Worker (LARK_APP_ID, LARK_APP_SECRET,
+# ADMIN_PASSWORD, GOOGLE_SA) tetap diatur di dashboard Cloudflare dan tidak disentuh deploy.
+name = "creative-aab"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+# Jangan hapus variabel yang diisi di dashboard saat deploy.
+keep_vars = true
+
+[triggers]
+crons = ["*/10 * * * *"]
+
+[[kv_namespaces]]
+binding = "STORE"
+id = "__CLOUDFLARE_KV_ID__"

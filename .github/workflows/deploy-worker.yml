@@ -1,0 +1,74 @@
+name: Deploy Worker
+
+# Jalan otomatis saat file server atau versi HP berubah di branch main.
+# Syarat: isi 3 secret di GitHub (Settings -> Secrets and variables -> Actions):
+#   - CLOUDFLARE_API_TOKEN (token dengan izin Edit Cloudflare Workers)
+#   - CLOUDFLARE_ACCOUNT_ID (Account ID dari dashboard Cloudflare)
+#   - CLOUDFLARE_KV_ID (ID namespace KV creative-aab-store)
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/worker.js"
+      - "server/wrangler.toml"
+      - "server/build-mobile.mjs"
+      - "mobile/**"
+      - ".github/workflows/deploy-worker.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Sinkronkan versi HP ke worker.js
+        run: node server/build-mobile.mjs
+
+      - name: Jalankan tes server
+        working-directory: server
+        run: |
+          node --check worker.js
+          node test/mock-test.mjs
+          node test/google-test.mjs
+
+      - name: Cek secret dan siapkan wrangler.toml
+        working-directory: server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_KV_ID: ${{ secrets.CLOUDFLARE_KV_ID }}
+        run: |
+          MISSING=""
+          for k in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_KV_ID; do
+            if [ -z "${!k}" ]; then MISSING="$MISSING $k"; fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "Secret GitHub belum lengkap:$MISSING"
+            echo "Tambahkan di Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          node -e '
+            const fs = require("fs");
+            const p = "wrangler.toml";
+            const s = fs.readFileSync(p, "utf8");
+            if (!s.includes("__CLOUDFLARE_KV_ID__")) {
+              console.error("Placeholder __CLOUDFLARE_KV_ID__ tidak ditemukan di wrangler.toml");
+              process.exit(1);
+            }
+            fs.writeFileSync(p, s.replace("__CLOUDFLARE_KV_ID__", process.env.CLOUDFLARE_KV_ID.trim()));
+          '
+
+      - name: Deploy Worker ke Cloudflare
+        working-directory: server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@3 deploy

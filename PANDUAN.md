@@ -61,7 +61,7 @@ Urutan setup: **A. Lark → B. Sheet → C. Cloudflare → D. Widget**. Cukup se
 
 **Pindah dari versi 1.0 (folder zip):** klik kanan ikon CRE di tray → **Keluar**, hapus folder `Creative AAB-win32-x64` lama, lalu pasang installer di atas. Versi 1.0 berhenti jalan begitu server versi baru di-deploy, karena kunci tim sudah diganti login per akun.
 
-**Update:** aplikasi mengecek versi baru saat dibuka dan tiap 6 jam, lalu mengunduhnya diam-diam. Begitu siap, muncul pop-up. Klik **Pengaturan → Pasang dan restart**, atau biarkan saja: update terpasang otomatis saat aplikasi ditutup. Tombol **Cek pembaruan** ada di Pengaturan.
+**Update:** mulai versi 1.7, server ikut menitipkan info versi rilis terbaru di respons rutin. Begitu ada versi baru, aplikasi di tiap laptop otomatis mengunduhnya, menampilkan banner di bagian atas dan pop-up sekali per versi dengan tombol **Update Sekarang**. Klik tombol itu untuk memasang dan restart, atau biarkan saja: update terpasang otomatis saat aplikasi ditutup. Tombol **Cek pembaruan** tetap tersedia di Pengaturan.
 
 Widget otomatis terbuka saat Windows menyala. Tombol − menyembunyikannya ke tray (ikon CRE di pojok kanan bawah, di dekat jam).
 
@@ -80,7 +80,7 @@ Widget otomatis terbuka saat Windows menyala. Tombol − menyembunyikannya ke tr
 - **Profil tim**: kartu semua anggota. Klik nama atau foto siapa saja (di Timeline juga) untuk membuka profilnya: foto besar, sampul, jabatan, bio, dan aktivitas orang itu. Di profil sendiri ada **Edit profil** untuk mengganti jabatan, bio, dan foto sampul.
 - **Warna latar dan kartu** (Pengaturan): geser ke kanan supaya sidebar, kartu, dan latar ikut warna aksen. Geser ke kiri untuk tampilan netral seperti versi 1.3.
 - Timeline menyimpan 300 item terakhir. Foto postingan dikompres otomatis.
-- **Minta semua update (versi 1.5.2, khusus Ray)**: setelah rilis baru, update widget Ray dulu. Lalu di **Pengaturan → Aplikasi**, lihat daftar **Versi aplikasi tim** dan klik **Kirim pop-up: minta semua update**. Laptop yang belum di versi itu mendapat pop-up dalam 1 menit, dan widgetnya langsung mulai mengunduh pembaruan. Versi tiap orang tercatat otomatis mulai versi 1.5.2.
+- **Versi aplikasi tim (khusus Ray)**: di **Pengaturan → Aplikasi**, Ray dapat melihat daftar versi aplikasi yang sedang dipakai tiap anggota tim. Mulai versi 1.7, tombol manual "minta semua update" sudah dihapus karena tiap laptop otomatis mendapat notifikasi dan tombol **Update Sekarang** begitu versi baru tersedia.
 - **Tag dan notifikasi (versi 1.5.1)**: ketik `@` di postingan atau komentar, lalu pilih nama dari daftar (panah atas/bawah lalu Enter, atau klik). Orang yang ditag, pemilik postingan yang dikomentari, orang yang sudah ikut berkomentar, dan pemilik postingan yang diberi reaksi mendapat notifikasi. Lonceng di kanan atas menampilkan jumlah yang belum dibaca. Klik satu notifikasi untuk membuka postingannya. Notifikasi baru juga muncul sebagai pop-up di pojok layar (dicek tiap 1 menit).
 
 ## Versi HP (versi 1.6)
@@ -99,11 +99,27 @@ Versi HP isinya ringan: **notifikasi** untuk semua akun, plus **approval** reque
 2. Ketuk tombol **Share** (kotak dengan panah ke atas) → **Add to Home Screen** → **Add**.
 3. Buka Creative AAB dari layar utama, login → tab **Akun** → **Nyalakan notifikasi di HP ini** → **Allow**. Di iPhone, notifikasi hanya jalan kalau dibuka dari layar utama.
 
-**Yang masuk sebagai notifikasi:** ditandai (@), komentar di postinganmu, balasan diskusi, request baru dan slide EP baru (khusus Ray), keputusan EP (OKE atau revisi, untuk tim), reaksi (mati bawaan, bisa dinyalakan), dan permintaan update aplikasi laptop. Tiap jenis bisa dimatikan di tab **Akun**, per HP.
+**Yang masuk sebagai notifikasi:** ditandai (@), komentar di postinganmu, balasan diskusi, request baru dan slide EP baru (khusus Ray), keputusan EP (OKE atau revisi, untuk tim), reaksi (mati bawaan, bisa dinyalakan), dan peringatan sistem (khusus Ray, misalnya token Instagram bermasalah atau kuota mendekati batas). Tiap jenis bisa dimatikan di tab **Akun**, per HP.
 
 **Approval (Ray):** tab **Approval** berisi request yang belum diputuskan (Approve, Pending, Reject) dan slide EP yang belum diputuskan (OKE, atau Revisi dengan catatan). Keputusan langsung tertulis ke sheet dan EP, dan tim dapat notifikasi.
 
 Notifikasi request baru dicek bersama jadwal sheet (tiap 10 menit di jam kerja). Notifikasi HP tidak butuh pengaturan tambahan di Cloudflare: kunci notifikasi dibuat otomatis oleh server saat pertama dipakai.
+
+## Pembaruan versi 1.7
+
+Halaman baru di versi 1.7 dibuka dari **jendela penuh**. Menu lama Ray yang sebelumnya bernama KPI tim kini berlabel **Dashboard tim** supaya tidak tertukar dengan tampilan sheet KPI.
+
+- **KPI tim saat ini** (semua akun, hanya baca): membaca range `A46:I67` dari tab pertama sheet KPI Lark, disimpan di cache server, dan diperbarui berkala supaya hemat kuota Lark. Ray punya tombol **Tarik ulang** dan pilihan melihat KPI bulan lalu dari snapshot. Jika file KPI terpisah dari file bulanan, pastikan app Lark sudah ditambahkan ke file KPI (klik **⋯ → More → Add Apps**) minimal dengan akses baca (**Can view** atau **Can edit**).
+- **Notifikasi update otomatis**: setiap ada rilis baru, banner muncul di bagian atas aplikasi (baik mode ringkas maupun jendela penuh) dan pop-up muncul sekali per versi dengan tombol **Update Sekarang**.
+- **Kesehatan & kuota** (khusus Ray, grup menu **KHUSUS RAY**): menampilkan status token Meta/Instagram (Valid atau tidak valid, masa berlaku), perkiraan pemakaian kuota KV harian (`/1.000` tulis) dan panggilan Lark bulanan (`/10.000` call) beserta proyeksi akhir bulan, waktu sinkron terakhir, dan log error tiap layanan (Lark, Google, Instagram). Jika ada token bermasalah atau kuota tinggi, muncul tanda `!` di sidebar dan peringatan sistem ke laptop serta HP Ray (maksimal sekali sehari per masalah).
+- **Setup bulan baru** (khusus Ray): satu halaman untuk menempel link sheet Lark bulanan, Content Calendar, dan EP sekaligus (ditambah link sheet KPI bila terpisah). Klik **Tes koneksi** untuk memeriksa akses dan tab setiap file, centang **Simpan snapshot bulan lalu** agar Ringkasan bisa menampilkan pembanding MoM, lalu klik **Terapkan**.
+- **Catatan lead** (khusus Ray): catatan privat per anggota dengan kategori **Performance**, **Development**, **Potential**, dan **Arahan** untuk bahan Bagian 6 Monthly Report. Catatan tidak terlihat anggota tim dan tidak masuk Timeline. Klik **Salin ringkasan Bagian 6** untuk menyalin rangkuman bulan yang dipilih.
+- **Auto-deploy Worker lewat GitHub Actions**: setiap perubahan di `server/` atau `mobile/` yang masuk ke branch `main` otomatis dites lalu dideploy ke Cloudflare Worker tanpa salin kode manual. Cukup isi 3 secret sekali di GitHub (**Settings → Secrets and variables → Actions → New repository secret**):
+  1. `CLOUDFLARE_API_TOKEN`: buat di Cloudflare (**My Profile → API Tokens → Create Token → Edit Cloudflare Workers**).
+  2. `CLOUDFLARE_ACCOUNT_ID`: salin **Account ID** dari dashboard Cloudflare (**Workers & Pages**).
+  3. `CLOUDFLARE_KV_ID`: salin **ID** namespace KV `creative-aab-store` dari **Storage & Databases → KV**.
+
+  Deploy juga bisa dijalankan manual kapan saja lewat tab **Actions → Deploy Worker → Run workflow**. Variabel dan secret Worker di Cloudflare (`LARK_APP_ID`, `LARK_APP_SECRET`, `ADMIN_PASSWORD`, `GOOGLE_SA`) tidak ikut terhapus saat deploy.
 
 ## Akun dan akses
 
@@ -158,10 +174,15 @@ Yang terjadi setelah terhubung:
 
 ## E. Rutinitas tiap awal bulan
 
-1. Duplikat file seperti biasa.
-2. Tambahkan app ke file baru (langkah B1). Blok AIGC ikut terbawa saat diduplikat.
-3. Di widget Ray: **Pengaturan → Link sheet bulan ini**, tempel link baru, lalu klik **Pakai file ini**. Semua laptop otomatis ikut.
-4. Buat Content Calendar dan EP bulan baru seperti biasa (di dalam folder bulanan). Di widget Ray: **Pengaturan → Content Calendar dan EP**, tempel kedua link baru, lalu klik **Pakai link ini**. Kalau file dibuat di luar folder induk yang sudah dibagikan (langkah F7), bagikan dulu ke email service account.
+1. Duplikat file Lark bulanan seperti biasa, lalu tambahkan app ke file baru (langkah B1). Blok AIGC ikut terbawa saat diduplikat.
+2. Buat Content Calendar dan EP bulan baru di dalam folder bulanan Google Drive (kalau di luar folder induk yang sudah dibagikan pada langkah F7, bagikan dulu ke email service account).
+3. Di jendela penuh laptop Ray, buka menu **Setup bulan baru** (atau lewat pintasan di **Pengaturan**):
+   - Tempel link **Sheet Lark bulanan**, **Content Calendar**, dan **EP** sekaligus (isi juga **Sheet KPI** bila file KPI berubah).
+   - Klik **Tes koneksi** untuk memastikan akses dan tab semua file sudah benar.
+   - Biarkan centang **Simpan snapshot bulan lalu** aktif agar angka bulan lalu tersimpan untuk pembanding MoM di Ringkasan dan arsip KPI.
+   - Klik **Terapkan**. Semua laptop tim otomatis ikut pindah ke file bulan baru.
+
+(Pengaturan terpisah di **Pengaturan → Link sheet bulan ini** dan **Content Calendar dan EP** tetap tersedia kalau hanya ingin mengganti salah satu file.)
 
 ## Cara kerja per orang
 
