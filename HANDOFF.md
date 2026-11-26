@@ -88,7 +88,7 @@ Setelah memperbaiki `mobile/*`: jalankan `node server/build-mobile.mjs`, jalanka
 
 **Aplikasi laptop (`widget/`):**
 - Rilis: naikkan `version` di `widget/package.json`, merge ke `main`, push. GitHub Actions (`.github/workflows/release.yml`) membuat rilis.
-- Halaman baru v1.7 di `widget/renderer/app.js` (jendela penuh): `kpi` (semua akun), `health`, `setup`, `notes` (grup KHUSUS RAY). Menu input lama Ray diberi label "Dashboard tim". Banner update otomatis tampil di kedua mode (`#updBanner`).
+- Halaman baru v1.7 di `widget/renderer/app.js` (jendela penuh): `kpi` (semua akun), `health`, `setup`, `notes` (grup KHUSUS RAY). Menu "Dashboard tim" di sidebar Ray dihapus sejak v1.7.2 (kontennya sudah ada di Ringkasan + KPI tim saat ini; anggota tim tetap punya "Input KPI", dan mode ringkas Ray tetap punya tab Dashboard). Banner update otomatis tampil di kedua mode (`#updBanner`).
 - Renderer punya CSP ketat: dilarang atribut `style="..."` di HTML. Pakai class CSS atau `data-css` + `applyCss()`.
 
 ## 7. Panduan pengguna
