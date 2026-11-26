@@ -76,7 +76,7 @@ Widget otomatis terbuka saat Windows menyala. Tombol − menyembunyikannya ke tr
 
 ## Timeline, profil tim, dan tema penuh (versi 1.5)
 
-- **Timeline** (semua akun, jendela penuh): tulis kabar dengan teks dan foto, beri reaksi (Suka, Love, Haha, Wow, Keren), dan komentar. Kejadian dari widget ikut muncul otomatis: konten baru di KPI, hasil design dan video, input AIGC, keputusan request, OKE atau revisi EP, dan POSTED. Postingan dan komentar bisa dihapus pemiliknya atau Ray. Menu Timeline menampilkan tanda **Baru** kalau ada kabar yang belum dibaca.
+- **Timeline** (semua akun, jendela penuh): tulis kabar dengan teks dan foto, beri reaksi (Suka, Love, Haha, Wow, Keren), dan komentar. Kejadian dari widget ikut muncul otomatis: konten baru di KPI, hasil design dan video, input AIGC, request selesai, dan POSTED. Keputusan approval (request dan EP) tidak masuk Timeline, cukup lewat notifikasi. Postingan dan komentar bisa dihapus pemiliknya atau Ray. Menu Timeline menampilkan tanda **Baru** kalau ada kabar yang belum dibaca.
 - **Profil tim**: kartu semua anggota. Klik nama atau foto siapa saja (di Timeline juga) untuk membuka profilnya: foto besar, sampul, jabatan, bio, dan aktivitas orang itu. Di profil sendiri ada **Edit profil** untuk mengganti jabatan, bio, dan foto sampul.
 - **Warna latar dan kartu** (Pengaturan): geser ke kanan supaya sidebar, kartu, dan latar ikut warna aksen. Geser ke kiri untuk tampilan netral seperti versi 1.3.
 - Timeline menyimpan 300 item terakhir. Foto postingan dikompres otomatis.
@@ -99,7 +99,7 @@ Versi HP isinya ringan: **notifikasi** untuk semua akun, plus **approval** reque
 2. Ketuk tombol **Share** (kotak dengan panah ke atas) → **Add to Home Screen** → **Add**.
 3. Buka Creative AAB dari layar utama, login → tab **Akun** → **Nyalakan notifikasi di HP ini** → **Allow**. Di iPhone, notifikasi hanya jalan kalau dibuka dari layar utama.
 
-**Yang masuk sebagai notifikasi:** ditandai (@), komentar di postinganmu, balasan diskusi, request baru (khusus Ray), keputusan EP (OKE atau revisi, untuk tim), reaksi (mati bawaan, bisa dinyalakan), dan permintaan update aplikasi laptop. Tiap jenis bisa dimatikan di tab **Akun**, per HP.
+**Yang masuk sebagai notifikasi:** ditandai (@), komentar di postinganmu, balasan diskusi, request baru dan slide EP baru (khusus Ray), keputusan EP (OKE atau revisi, untuk tim), reaksi (mati bawaan, bisa dinyalakan), dan permintaan update aplikasi laptop. Tiap jenis bisa dimatikan di tab **Akun**, per HP.
 
 **Approval (Ray):** tab **Approval** berisi request yang belum diputuskan (Approve, Pending, Reject) dan slide EP yang belum diputuskan (OKE, atau Revisi dengan catatan). Keputusan langsung tertulis ke sheet dan EP, dan tim dapat notifikasi.
 

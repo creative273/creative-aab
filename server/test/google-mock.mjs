@@ -56,6 +56,10 @@ const slideUpdates = [];
 
 let tokenCalls = 0;
 const calls = [];
+// Tambah slide EP baru (untuk tes notifikasi EP baru).
+export function addEpSlide(id, cover) {
+  slides.push({ objectId: id, pageElements: [shape(id + "a", `FORMAT: REELS\nCOVER : ${cover}\n\nTalent : \nRefly\n`), shape(id + "b", "Upload : Jumat, 27 November 2026\n")] });
+}
 export async function googleFetch(url, opts = {}) {
   const u = new URL(url);
   if (!u.host.endsWith("googleapis.com")) return null;

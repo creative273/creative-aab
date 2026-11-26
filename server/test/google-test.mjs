@@ -295,6 +295,24 @@ await worker.scheduled({ scheduledTime: Date.UTC(2026, 10, 25, 3, 0) }, env, { w
 await new Promise((res) => setTimeout(res, 50));
 assert.ok(calls.slice(before).some((c) => c.includes("slides.googleapis.com")));
 
+// Slide EP baru: Ray dapat notifikasi sekali, tim tidak
+assert.ok(kv.get("ep:notified"), "pertama kali hanya mencatat");
+const epn0 = (await call("GET", "/api/notif", null, RAY)).data.items.filter((n) => n.type === "epnew").length;
+assert.equal(epn0, 0);
+slides.splice(slides.findIndex((x) => x.objectId === "p3"), 0, { objectId: "s_baru", pageElements: [shape("s_baru_a", "FORMAT: REELS\nCOVER : 3 TANDA KAMU SIAP LIVE\n\nTalent : \nRefly\n"), shape("s_baru_b", "Upload : Jumat, 27 November 2026\n")] });
+kv.delete("epcache");
+await worker.scheduled({ scheduledTime: Date.UTC(2026, 10, 25, 3, 10) }, env, { waitUntil: (p) => p });
+await new Promise((res) => setTimeout(res, 50));
+let epn = (await call("GET", "/api/notif", null, RAY)).data.items.filter((n) => n.type === "epnew");
+assert.equal(epn.length, 1); assert.equal(epn[0].epId, "s_baru"); assert.equal(epn[0].text, "3 TANDA KAMU SIAP LIVE");
+assert.ok(!(await call("GET", "/api/notif", null, ZAHRA)).data.items.some((n) => n.type === "epnew"), "hanya Ray");
+kv.delete("epcache");
+await worker.scheduled({ scheduledTime: Date.UTC(2026, 10, 25, 3, 20) }, env, { waitUntil: (p) => p });
+await new Promise((res) => setTimeout(res, 50));
+assert.equal((await call("GET", "/api/notif", null, RAY)).data.items.filter((n) => n.type === "epnew").length, 1, "tidak dikirim ulang");
+// Keputusan EP tidak masuk timeline
+assert.ok(!(await call("GET", "/api/feed", null, RAY)).data.items.some((i) => /EP/.test(i.text) && i.kind === "auto" && /menyetujui|revisi/.test(i.text)), "approval EP tidak di timeline");
+
 // GOOGLE_SA kosong: pesan jelas
 const env2 = { ...env, GOOGLE_SA: "" };
 kv.delete("google:token"); kv.delete("epcache");

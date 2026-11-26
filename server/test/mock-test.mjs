@@ -507,7 +507,7 @@ r = await call("GET", "/api/feed", null, T.zahra);
 assert.equal(r.status, 200);
 const autos = r.data.items.filter((i) => i.kind === "auto");
 assert.ok(autos.length >= 3, "kejadian otomatis masuk timeline: " + autos.length);
-assert.ok(autos.some((i) => /menyetujui request|menunda request|menolak request/.test(i.text)), "keputusan request");
+assert.ok(!autos.some((i) => /menyetujui request|menunda request|menolak request/.test(i.text)), "keputusan request tidak di timeline");
 assert.ok(autos.some((i) => /konten baru ke KPI CONTENT/.test(i.text)), "input content");
 assert.equal((await call("POST", "/api/feed/post", { text: "   " }, T.zahra)).status, 400);
 const png = "data:image/png;base64," + Buffer.from("fakepng").toString("base64");

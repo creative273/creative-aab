@@ -164,6 +164,7 @@ http.createServer(async (req, res) => {
     if (rq) {
       const list = JSON.parse(kv.get("notif:ray") || "[]");
       list.unshift({ id: "nreq1", at: new Date().toISOString(), read: false, type: "request", by: "", requester: rq.user, row: rq.row, reqId: rq.id, text: rq.info, deadline: rq.deadline });
+      list.unshift({ id: "nep1", at: new Date().toISOString(), read: false, type: "epnew", by: "", epId: "s_modal", text: "MODAL JADI AFFILIATOR", upload: "Rabu, 25 November 2026" });
       kv.set("notif:ray", JSON.stringify(list));
     }
   }
