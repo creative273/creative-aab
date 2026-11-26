@@ -8,8 +8,8 @@
 // Akun tim dibuat Ray dari widget (Pengaturan > Akun tim), disimpan di KV dengan password ter-hash.
 // Binding (Settings > Bindings):
 //   STORE            KV namespace
-// Trigger (Settings > Triggers > Cron):
-//   */10 1-11 * * 1-6   (tiap 10 menit, Senin-Sabtu, 08.00-18.59 WIB)
+// Trigger (Settings > Triggers > Cron, atau server/wrangler.toml sejak v1.7):
+//   */10 * * * *   (tiap 10 menit; server sendiri yang membatasi jam kerja, lihat scheduled())
 
 const LARK = "https://open.larksuite.com/open-apis";
 
@@ -35,8 +35,11 @@ const REQUEST_RANGE = "A2:I300";
 const REFRESH_COOLDOWN_MS = 60 * 1000;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
+    env = metered(env);
+    // v1.7: hitungan tulis KV dan panggilan Lark disimpan berkala (bukan tiap request) ke v17:health.
+    if (ctx && ctx.waitUntil) ctx.waitUntil(healthFlush(env).catch(() => {}));
     try {
       const url = new URL(request.url);
       if (url.pathname === "/") return cors(json({ ok: true, app: "creative-aab", auth: "accounts" }));
@@ -69,7 +72,6 @@ export default {
         "POST /api/push/subscribe": ["all", () => pushSubscribe(env, me, body)],
         "POST /api/push/unsubscribe": ["all", () => pushUnsubscribe(env, me, body)],
         "POST /api/notif/read": ["all", () => readNotif(env, me, body)],
-        "POST /api/app/update-request": ["lead", () => requestUpdate(env, me, body)],
         "GET /api/app/versions": ["lead", async () => ({ ok: true, versions: appVersions(await getAccounts(env)) })],
         "POST /api/password": ["all", () => changeOwnPassword(env, me, body)],
         "POST /api/request/done": ["all", () => requestDone(env, body, me)],
@@ -100,6 +102,17 @@ export default {
         "GET /api/accounts": ["lead", () => listAccounts(env)],
         "POST /api/accounts/save": ["lead", () => saveAccount(env, body)],
         "POST /api/accounts/delete": ["lead", () => deleteAccount(env, body)],
+        // v1.7
+        "GET /api/v17/kpi": ["all", () => kpiGet(env, me)],
+        "POST /api/v17/kpi/refresh": ["lead", () => kpiManual(env, me)],
+        "GET /api/v17/health": ["lead", () => healthInfo(env)],
+        "POST /api/v17/health/check": ["lead", () => healthCheckNow(env)],
+        "POST /api/v17/setup/validate": ["lead", () => setupValidate(env, body)],
+        "POST /api/v17/setup/apply": ["lead", () => setupApply(env, body)],
+        "GET /api/v17/snapshots": ["lead", () => snapshotsGet(env)],
+        "GET /api/v17/lead-notes": ["lead", () => leadNotesList(env, url)],
+        "POST /api/v17/lead-notes/save": ["lead", () => leadNoteSave(env, body)],
+        "POST /api/v17/lead-notes/delete": ["lead", () => leadNoteDelete(env, body)],
       };
       const entry = R[route];
       if (!entry) return cors(json({ ok: false, error: "Alamat tidak dikenal." }, 404));
@@ -116,16 +129,24 @@ export default {
     // supaya batas 50 subrequest paket gratis tidak memutus pembaruan sheet.
     // Jam kerja (Senin sampai Sabtu, 08.00 sampai 18.59 WIB): semuanya tiap 10 menit.
     // Di luar jam kerja dan hari Minggu: hanya Instagram, tiap 30 menit, tanpa menyentuh sheet Lark.
+    // v1.7, hanya di jalan menit 00 sampai 09 (sekali per jam): KPI Tim (jam kerja), cek rilis aplikasi,
+    // cek token Meta (sekali sehari jam 08.00 WIB), dan simpan catatan kesehatan sistem.
+    env = metered(env);
     const w = new Date((event && event.scheduledTime) || Date.now());
     const wib = new Date(w.getTime() + 7 * 3600 * 1000);
     const work = wib.getUTCDay() !== 0 && wib.getUTCHours() >= 8 && wib.getUTCHours() < 19;
     if (!work && wib.getUTCMinutes() % 30 >= 10) return;
+    const hourly = wib.getUTCMinutes() < 10;
     ctx.waitUntil((async () => {
       if (work) {
-        await refresh(env, { force: true }).catch(() => {});
+        await track("larkSheet", () => refresh(env, { force: true })).catch(() => {});
         await googleRefreshAll(env).catch(() => {});
       }
       await igSync(env, { sheet: work }).catch(() => {});
+      if (work && hourly && (await env.STORE.get("config"))) await track("larkKpi", () => kpiSync(env)).catch(() => {});
+      if (hourly) await track("appRelease", () => appLatestCheck(env)).catch(() => {});
+      if (hourly && wib.getUTCHours() === 8) await metaTokenCheck(env).catch(() => {});
+      await healthFlush(env, { force: hourly }).catch(() => {});
     })());
   },
 };
@@ -218,16 +239,8 @@ async function authenticate(env, request) {
 
 const verNum = (v) => String(v || "0.0.0").split(".").map(Number).reduce((a, n) => a * 1000 + (n || 0), 0);
 
-// Ray minta semua laptop update: tiap akun dapat notifikasi "update", widget menampilkannya sebagai pop-up.
-async function requestUpdate(env, me, body) {
-  const version = clean(body.version);
-  if (!/^\d+\.\d+\.\d+$/.test(version)) throw fail("Versi tidak dikenali.");
-  const accounts = await getAccounts(env);
-  const to = Object.values(accounts).filter((a) => a.active !== false && a.username !== me.username && verNum(a.appVersion) < verNum(version));
-  const text = `Tolong update aplikasi ke v${version}. Buka Pengaturan, klik Cek pembaruan, lalu Restart.`;
-  for (const a of to) await notify(env, a.username, { type: "update", by: me.username, version, text }).catch(() => {});
-  return { ok: true, sent: to.map((a) => a.username), versions: appVersions(accounts) };
-}
+// v1.7: tombol manual "minta semua update" dihapus. Versi terbaru dicek otomatis dari rilis GitHub
+// (appLatestCheck) dan dititipkan di /api/state sebagai latestApp.
 
 function appVersions(accounts) {
   return Object.values(accounts).filter((a) => a.active !== false).map((a) => ({ username: a.username, name: a.name || a.username, version: a.appVersion || "", seenAt: a.appSeenAt || null })).sort((a, b) => String(a.name || a.username).localeCompare(String(b.name || b.username)));
@@ -631,8 +644,8 @@ const snippet = (t) => String(t || "").replace(/\s+/g, " ").slice(0, 90);
 // Push dikirim tanpa isi (tanpa enkripsi payload): HP hanya "dibangunkan", lalu service worker mengambil
 // notifikasi terbaru dari /api/notif dengan token login yang tersimpan di HP. Kunci VAPID dibuat sekali
 // oleh server dan disimpan di KV (push:vapid); kunci privat tidak pernah keluar dari server.
-const PUSH_TYPES = ["mention", "comment", "reply", "react", "request", "epnew", "ep", "update"];
-const PUSH_DEFAULT = { mention: true, comment: true, reply: true, react: false, request: true, epnew: true, ep: true, update: true };
+const PUSH_TYPES = ["mention", "comment", "reply", "react", "request", "epnew", "ep", "update", "system"];
+const PUSH_DEFAULT = { mention: true, comment: true, reply: true, react: false, request: true, epnew: true, ep: true, update: true, system: true };
 const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const fromB64u = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 
@@ -788,6 +801,7 @@ async function dashboard(env) {
 async function larkToken(env) {
   const cached = await env.STORE.get("lark:token", "json");
   if (cached && cached.expiresAt > Date.now() + 5 * 60 * 1000) return cached.token;
+  HC.lark++;
   const res = await fetch(`${LARK}/auth/v3/tenant_access_token/internal`, {
     method: "POST",
     headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -802,6 +816,7 @@ async function larkToken(env) {
 
 async function lark(env, method, path, payload) {
   const token = await larkToken(env);
+  HC.lark++;
   const res = await fetch(`${LARK}${path}`, {
     method,
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json; charset=utf-8" },
@@ -851,8 +866,9 @@ async function getConfig(env) {
   return cfg;
 }
 
-async function setConfig(env, body) {
-  const token = parseSpreadsheetToken(body.url || "");
+// Cek link sheet Lark tanpa menyimpan apa pun (dipakai setConfig dan Setup Bulan Baru v1.7).
+async function checkLark(env, url) {
+  const token = parseSpreadsheetToken(url || "");
   if (!token) throw fail("Link tidak dikenali. Tempel link sheet Lark yang berisi /sheets/...");
   const meta = await lark(env, "GET", `/sheets/v3/spreadsheets/${token}/sheets/query`);
   const sheets = meta.sheets || [];
@@ -876,9 +892,15 @@ async function setConfig(env, body) {
     warnings.push("Blok AIGC (AH:AK) belum ada. Input Rifqi belum bisa dipakai sampai blok dibuat.");
   }
   cfg.aigcReady = at("AJ").includes("produksi") && at("AK").includes("upload");
+  return { cfg, warnings, sheets };
+}
 
+async function setConfig(env, body) {
+  const { cfg, warnings, sheets } = await checkLark(env, body.url);
+  const old = await env.STORE.get("config", "json");
   await env.STORE.put("config", JSON.stringify(cfg));
   await env.STORE.delete("cache");
+  await kpiFollow(env, old, cfg, sheets).catch(() => {});
   const state = await refresh(env, { force: true });
   return { ...state, warnings };
 }
@@ -1290,34 +1312,47 @@ async function googleConfigInfo(env) {
   return { ok: true, serviceAccount: email, calendar: g.calendar || null, ep: g.ep || null };
 }
 
+// Cek link Content Calendar tanpa menyimpan (dipakai setGoogleConfig dan Setup Bulan Baru v1.7).
+async function checkCalendar(env, url) {
+  const warnings = [];
+  const id = parseGoogleId(url, "sheet");
+  if (!id) throw fail("Link Content Calendar harus link Google Sheets (docs.google.com/spreadsheets/d/...).");
+  const meta = await google(env, "GET", `${SHEETS}/${id}?fields=properties.title,sheets.properties(sheetId,title)`);
+  const titles = meta.sheets.map((s) => s.properties.title);
+  const heads = await google(env, "GET", `${SHEETS}/${id}/values:batchGet?${titles.map((t) => `ranges=${encodeURIComponent(`'${t}'!B3:M3`)}`).join("&")}`);
+  const tabs = [];
+  heads.valueRanges.forEach((vr, i) => {
+    const h = ((vr.values || [])[0] || []).map((x) => String(x).trim().toLowerCase());
+    if (h[0] === "#" && h[4] === "content" && h[5] === "date") tabs.push({ title: titles[i], account: titles[i].trim().split(/\s+/)[0].toUpperCase() });
+  });
+  if (!tabs.length) throw fail('Tidak ada tab content plan di file ini (header baris 3: # | Content Pillar | ... | Content | Date).');
+  let options = { pillars: [], formats: [], platforms: [] };
+  if (titles.includes("Settings")) {
+    const s = await google(env, "GET", `${SHEETS}/${id}/values:batchGet?ranges=${encodeURIComponent("Settings!C12:C40")}&ranges=${encodeURIComponent("Settings!G12:G40")}&ranges=${encodeURIComponent("Settings!K12:K40")}`);
+    const col = (vr) => (vr.values || []).map((r) => clean(r[0])).filter(Boolean);
+    options = { pillars: col(s.valueRanges[0]), formats: col(s.valueRanges[1]), platforms: col(s.valueRanges[2]) };
+  } else warnings.push("Tab Settings tidak ditemukan. Pilihan pillar dan format diketik manual.");
+  return { calendar: { id, title: meta.properties.title, tabs, options, setAt: new Date().toISOString() }, warnings };
+}
+
+// Cek link EP tanpa menyimpan. withCount: ikut hitung jumlah slide (untuk Setup Bulan Baru).
+async function checkEp(env, url, { withCount = false } = {}) {
+  const id = parseGoogleId(url, "slides");
+  if (!id) throw fail("Link EP harus link Google Slides (docs.google.com/presentation/d/...).");
+  const meta = await google(env, "GET", `${SLIDES}/${id}?fields=${withCount ? encodeURIComponent("title,slides.objectId") : "title"}`);
+  return { ep: { id, title: meta.title, setAt: new Date().toISOString() }, slides: withCount ? (meta.slides || []).length : null };
+}
+
 async function setGoogleConfig(env, body) {
   const g = await getGoogleConfig(env);
   const warnings = [];
   if (body.calendarUrl !== undefined && clean(body.calendarUrl)) {
-    const id = parseGoogleId(body.calendarUrl, "sheet");
-    if (!id) throw fail("Link Content Calendar harus link Google Sheets (docs.google.com/spreadsheets/d/...).");
-    const meta = await google(env, "GET", `${SHEETS}/${id}?fields=properties.title,sheets.properties(sheetId,title)`);
-    const titles = meta.sheets.map((s) => s.properties.title);
-    const heads = await google(env, "GET", `${SHEETS}/${id}/values:batchGet?${titles.map((t) => `ranges=${encodeURIComponent(`'${t}'!B3:M3`)}`).join("&")}`);
-    const tabs = [];
-    heads.valueRanges.forEach((vr, i) => {
-      const h = ((vr.values || [])[0] || []).map((x) => String(x).trim().toLowerCase());
-      if (h[0] === "#" && h[4] === "content" && h[5] === "date") tabs.push({ title: titles[i], account: titles[i].trim().split(/\s+/)[0].toUpperCase() });
-    });
-    if (!tabs.length) throw fail('Tidak ada tab content plan di file ini (header baris 3: # | Content Pillar | ... | Content | Date).');
-    let options = { pillars: [], formats: [], platforms: [] };
-    if (titles.includes("Settings")) {
-      const s = await google(env, "GET", `${SHEETS}/${id}/values:batchGet?ranges=${encodeURIComponent("Settings!C12:C40")}&ranges=${encodeURIComponent("Settings!G12:G40")}&ranges=${encodeURIComponent("Settings!K12:K40")}`);
-      const col = (vr) => (vr.values || []).map((r) => clean(r[0])).filter(Boolean);
-      options = { pillars: col(s.valueRanges[0]), formats: col(s.valueRanges[1]), platforms: col(s.valueRanges[2]) };
-    } else warnings.push("Tab Settings tidak ditemukan. Pilihan pillar dan format diketik manual.");
-    g.calendar = { id, title: meta.properties.title, tabs, options, setAt: new Date().toISOString() };
+    const c = await checkCalendar(env, body.calendarUrl);
+    g.calendar = c.calendar;
+    warnings.push(...c.warnings);
   }
   if (body.epUrl !== undefined && clean(body.epUrl)) {
-    const id = parseGoogleId(body.epUrl, "slides");
-    if (!id) throw fail("Link EP harus link Google Slides (docs.google.com/presentation/d/...).");
-    const meta = await google(env, "GET", `${SLIDES}/${id}?fields=title`);
-    g.ep = { id, title: meta.title, setAt: new Date().toISOString() };
+    g.ep = (await checkEp(env, body.epUrl)).ep;
   }
   await env.STORE.put("gconfig", JSON.stringify(g));
   await env.STORE.delete("calcache");
@@ -1402,6 +1437,9 @@ async function fullState(env, me, base) {
   const g = await getGoogleConfig(env);
   if (g.ep) out.ep = await getEp(env, me).catch((e) => ({ ok: false, error: e.message }));
   if (g.calendar && allowed(me, "content")) out.cal = await getCalendar(env).catch((e) => ({ ok: false, error: e.message }));
+  // v1.7: versi aplikasi laptop terbaru (dari rilis GitHub), dipakai widget untuk notifikasi update otomatis.
+  const app = await env.STORE.get("v17:app:latest", "json");
+  out.latestApp = app ? { version: app.version, url: app.url } : null;
   return out;
 }
 
@@ -1675,8 +1713,8 @@ async function epPosted(env, body, me) {
 
 async function googleRefreshAll(env) {
   const g = await getGoogleConfig(env);
-  if (g.calendar) await refreshCalendar(env).catch(() => {});
-  if (g.ep) await refreshEp(env).catch(() => {});
+  if (g.calendar) await track("googleCal", () => refreshCalendar(env)).catch(() => {});
+  if (g.ep) await track("googleEp", () => refreshEp(env)).catch(() => {});
 }
 
 // Ringkasan content plan minggu ini (Senin sampai Minggu, WIB) untuk dashboard Ray.
@@ -1927,9 +1965,11 @@ async function igSync(env, { force = false, sheet = true } = {}) {
   let synced = 0;
   for (const acc of IG_ACCOUNTS) {
     if (!tokens[acc]) continue;
-    try { await igSyncAccount(env, acc, tokens[acc], { force }); synced++; } catch (e) {
+    try { await igSyncAccount(env, acc, tokens[acc], { force }); synced++; svcMark(`ig${acc}`); } catch (e) {
       tokens[acc].error = e.message;
       await env.STORE.put("ig:accounts", JSON.stringify(tokens));
+      svcMark(`ig${acc}`, e);
+      if (e.igCode === 190) await systemWarn(env, `token:${acc}`, `Token Instagram ${acc} ditolak Meta (kode 190). Sambungkan ulang token di Pengaturan > Instagram.`).catch(() => {});
     }
   }
   if (sheet) await igSheetSync(env).catch(() => {});
@@ -2034,6 +2074,554 @@ async function igManualSync(env) {
   await igSync(env, { force: false });
   await igSheetSync(env, { force: true }).catch(() => {});
   return igOverview(env);
+}
+
+// ---------- v1.7 ----------
+// Semua data baru v1.7 disimpan di key KV berawalan "v17:". Key lama v1.6.2 tidak diubah strukturnya,
+// jadi rollback ke tag v1.6.2-stable tetap jalan tanpa migrasi.
+//   v17:kpi:config   sumber KPI Tim { token, sheetId, sheetTitle, range, manual }
+//   v17:kpi:sheet    cache tabel KPI Tim (read-only)
+//   v17:app:latest   versi aplikasi laptop terbaru dari rilis GitHub
+//   v17:health       kuota (estimasi), status layanan, log error, status token Meta
+//   v17:snapshots    snapshot bulanan untuk pembanding MoM (maks 12)
+//   v17:leadnotes    catatan lead privat (khusus Ray)
+
+const KPI_DEFAULT = { token: "PSUosgLcFh58JftjSZclS4FwgLe", sheetId: "OAAqNU", range: "A46:I67" };
+const KPI_STALE_MS = 3 * 3600 * 1000;
+const MANUAL_COOLDOWN_MS = 5 * 60 * 1000;
+const APP_LATEST_URL = "https://github.com/creative273/creative-aab/releases/latest/download/latest.yml";
+const APP_RELEASE_URL = "https://github.com/creative273/creative-aab/releases/tag/v";
+const HEALTH_SERVICES = {
+  larkSheet: "Lark: sheet bulanan",
+  larkKpi: "Lark: KPI Tim",
+  googleCal: "Google: Content Calendar",
+  googleEp: "Google: EP",
+  igAAB: "Instagram AAB",
+  igNUSANTARA: "Instagram NUSANTARA",
+  appRelease: "GitHub: rilis aplikasi",
+};
+const HEALTH_ERRORS_KEEP = 15;
+const NOTE_CATS = ["performance", "development", "potential", "arahan"];
+const LEAD_NOTES_MAX = 1500;
+const SNAPSHOT_KEEP = 12;
+const NAMA_BULAN = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+const wibMonth = (ms = Date.now()) => wibDay(ms).slice(0, 7);
+const monthLabel = (m) => { const [y, mm] = String(m).split("-").map(Number); return `${NAMA_BULAN[mm - 1] || ""} ${y}`.trim(); };
+// Bulan yang ditutup saat Setup Bulan Baru: tanggal 1 sampai 15 = bulan lalu, sesudahnya = bulan ini.
+function defaultSnapshotMonth(ms = Date.now()) {
+  const d = new Date(ms + 7 * 3600 * 1000);
+  if (d.getUTCDate() > 15) return wibMonth(ms);
+  const p = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1));
+  return `${p.getUTCFullYear()}-${String(p.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+// ----- Penghitung kuota dan status layanan (di memori, disimpan berkala) -----
+// Tiap tulis KV dan panggilan Lark hanya menaikkan angka di memori. Angka itu disimpan ke v17:health
+// paling sering sekali per jam (atau saat ada error baru), jadi pencatatan ini sendiri hemat kuota tulis.
+const HC = { kv: 0, lark: 0, svc: {}, lastFlush: Date.now() };
+
+function metered(env) {
+  if (!env || !env.STORE || env.__metered) return env;
+  const S = env.STORE;
+  return {
+    ...env,
+    __metered: true,
+    STORE: {
+      get: (...a) => S.get(...a),
+      put: (...a) => { HC.kv++; return S.put(...a); },
+      delete: (...a) => S.delete(...a),
+      list: (...a) => S.list(...a),
+    },
+  };
+}
+
+function svcMark(name, err) {
+  HC.svc[name] = err ? { ok: false, at: Date.now(), error: String((err && err.message) || err).slice(0, 300) } : { ok: true, at: Date.now() };
+}
+
+async function track(name, fn) {
+  try {
+    const out = await fn();
+    svcMark(name);
+    return out;
+  } catch (e) {
+    svcMark(name, e);
+    throw e;
+  }
+}
+
+async function healthLoad(env) {
+  const h = (await env.STORE.get("v17:health", "json")) || {};
+  h.quota = h.quota || {};
+  h.services = h.services || {};
+  h.errors = h.errors || [];
+  h.metaTokens = h.metaTokens || {};
+  h.warned = h.warned || {};
+  return h;
+}
+
+// force: simpan kalau ada yang tertunda. mutate: ubah isi lalu pasti disimpan.
+// Tanpa keduanya: simpan hanya kalau status layanan berubah, ada 25+ hitungan tertunda, atau sudah 1 jam.
+async function healthFlush(env, { force = false, mutate = null } = {}) {
+  const pending = () => HC.kv + HC.lark;
+  const timeDue = () => Date.now() - HC.lastFlush >= 3600 * 1000;
+  if (!force && !mutate && !Object.keys(HC.svc).length && !(pending() >= 25 || (pending() > 0 && timeDue()))) return false;
+  const h = await healthLoad(env);
+  // Mulai dari sini sinkron sampai put, supaya hitungan tidak tercecer.
+  const svc = HC.svc;
+  let important = !!mutate;
+  for (const [name, s] of Object.entries(svc)) {
+    const prev = h.services[name] || {};
+    if (prev.ok !== s.ok || (!s.ok && prev.lastError !== s.error)) important = true;
+    if (!s.ok && (prev.ok !== false || prev.lastError !== s.error)) h.errors.unshift({ at: s.at, service: name, message: s.error });
+    const next = { ...prev, ok: s.ok };
+    if (s.ok) next.lastOkAt = s.at;
+    else { next.lastErrAt = s.at; next.lastError = s.error; }
+    h.services[name] = next;
+  }
+  const anything = pending() > 0 || Object.keys(svc).length > 0;
+  if (!(important || (force && anything) || pending() >= 25 || (anything && timeDue()))) return false;
+  if (mutate) mutate(h);
+  const day = wibDay(), month = wibMonth(), q = h.quota;
+  if (q.kvDay !== day) { q.kvDay = day; q.kvWrites = 0; }
+  if (q.larkMonth !== month) { q.larkMonth = month; q.larkCalls = 0; }
+  q.kvWrites = (q.kvWrites || 0) + HC.kv;
+  q.larkCalls = (q.larkCalls || 0) + HC.lark;
+  h.errors = h.errors.slice(0, HEALTH_ERRORS_KEEP);
+  h.updatedAt = new Date().toISOString();
+  HC.kv = 0; HC.lark = 0; HC.svc = {}; HC.lastFlush = Date.now();
+  await env.STORE.put("v17:health", JSON.stringify(h)); // tulisan ini ikut terhitung di simpanan berikutnya
+  return true;
+}
+
+// Peringatan sistem ke Ray (notifikasi tipe "system"), paling banyak sekali sehari per jenis.
+async function systemWarn(env, key, text) {
+  const today = wibDay();
+  const h = await healthLoad(env);
+  if (h.warned[key] === today) return false;
+  await healthFlush(env, { mutate: (x) => { x.warned = { ...(x.warned || {}), [key]: today }; } });
+  const leads = Object.values(await getAccounts(env)).filter((a) => a.active !== false && MEMBERS[a.member]?.block === "lead");
+  for (const l of leads) await notify(env, l.username, { type: "system", by: "", key, text: String(text).slice(0, 240) }).catch(() => {});
+  return true;
+}
+
+// ----- Versi aplikasi terbaru (dari latest.yml rilis GitHub, file yang sama dipakai auto-update laptop) -----
+export function parseLatestYml(text) {
+  const m = String(text || "").match(/^version:\s*['"]?(\d+\.\d+\.\d+)/m);
+  return m ? m[1] : "";
+}
+
+async function appLatestCheck(env) {
+  const res = await fetch(APP_LATEST_URL, { headers: { "User-Agent": "creative-aab-worker" } });
+  if (!res.ok) throw fail(`GitHub menjawab HTTP ${res.status} saat cek rilis.`, 502);
+  const version = parseLatestYml(await res.text());
+  if (!version) throw fail("File latest.yml di rilis GitHub tidak berisi versi.", 502);
+  const prev = (await env.STORE.get("v17:app:latest", "json")) || {};
+  if (prev.version === version) return prev;
+  const out = { version, url: `${APP_RELEASE_URL}${version}`, seenAt: new Date().toISOString() };
+  await env.STORE.put("v17:app:latest", JSON.stringify(out)); // hanya saat versi berubah
+  return out;
+}
+
+// ----- KPI Tim (read-only dari sheet Lark) -----
+async function kpiConfig(env) {
+  return { ...KPI_DEFAULT, ...((await env.STORE.get("v17:kpi:config", "json")) || {}) };
+}
+
+const kpiCell = (v) => clean(v).replace(/\s+/g, " ");
+
+// Baris pertama yang berisi = judul kolom. Baris kosong dilewati, kolom kosong di ujung kanan dibuang.
+export function parseKpi(values, firstRow = 46) {
+  const rows = (values || []).map((r, i) => ({ row: firstRow + i, cells: Array.from({ length: 9 }, (_, j) => kpiCell(r && r[j])) }));
+  const filled = rows.filter((x) => x.cells.some(Boolean));
+  if (!filled.length) return { headers: [], headerRow: null, rows: [] };
+  let width = 9;
+  while (width > 1 && filled.every((x) => !x.cells[width - 1])) width--;
+  const [head, ...rest] = filled;
+  return { headers: head.cells.slice(0, width), headerRow: head.row, rows: rest.map((x) => ({ row: x.row, cells: x.cells.slice(0, width) })) };
+}
+
+const rangeFirstRow = (range) => Number((String(range).match(/^[A-Z]+(\d+)/) || [])[1]) || 46;
+
+// Sumber KPI dari link (boleh berisi ?sheet=ID). Tanpa ID tab: tab pertama file itu.
+function kpiFromUrl(url) {
+  const token = parseSpreadsheetToken(url || "");
+  if (!token) throw fail("Link KPI tidak dikenali. Tempel link sheet Lark yang berisi /sheets/...");
+  const m = String(url).match(/[?&]sheet=([A-Za-z0-9]+)/);
+  return { token, sheetId: m ? m[1] : "", sheetTitle: "", range: KPI_DEFAULT.range, manual: true, updatedAt: new Date().toISOString() };
+}
+
+// Pastikan id dan judul tab KPI diketahui. Kalau tab tidak ada (misal file bulan baru), pakai tab pertama.
+async function kpiResolve(env, kc) {
+  const meta = await lark(env, "GET", `/sheets/v3/spreadsheets/${kc.token}/sheets/query`);
+  const sheets = meta.sheets || [];
+  const hit = (kc.sheetId && sheets.find((s) => s.sheet_id === kc.sheetId)) || sheets[0];
+  if (!hit) throw fail("File KPI tidak punya tab.");
+  return { ...kc, sheetId: hit.sheet_id, sheetTitle: hit.title || "", updatedAt: new Date().toISOString() };
+}
+
+async function kpiSync(env, { manual = false } = {}) {
+  let kc = await kpiConfig(env);
+  if (!kc.sheetTitle || !kc.sheetId) {
+    kc = await kpiResolve(env, kc);
+    await env.STORE.put("v17:kpi:config", JSON.stringify(kc));
+  }
+  let values;
+  try {
+    [values] = await readRanges(env, { token: kc.token }, [`${kc.sheetId}!${kc.range}`]);
+  } catch (e) {
+    if (/Add Apps/.test(e.message)) throw e; // app belum punya akses: tidak perlu cari tab lain
+    const next = await kpiResolve(env, kc);
+    if (next.sheetId === kc.sheetId) throw e;
+    kc = next;
+    await env.STORE.put("v17:kpi:config", JSON.stringify(kc));
+    [values] = await readRanges(env, { token: kc.token }, [`${kc.sheetId}!${kc.range}`]);
+  }
+  const parsed = parseKpi(values, rangeFirstRow(kc.range));
+  const h = hash(JSON.stringify([kc.sheetId, parsed]));
+  const out = { sheetTitle: kc.sheetTitle, sheetId: kc.sheetId, range: kc.range, ...parsed, hash: h, fetchedAt: new Date().toISOString() };
+  const prev = await env.STORE.get("v17:kpi:sheet", "json");
+  // Tulis KV hanya kalau isi berubah, cache sudah lebih dari 3 jam, atau tarik ulang manual oleh Ray.
+  if (manual || !prev || prev.hash !== h || Date.now() - Date.parse(prev.fetchedAt) > KPI_STALE_MS) {
+    await env.STORE.put("v17:kpi:sheet", JSON.stringify(out));
+  }
+  return out;
+}
+
+// Saat link sheet bulanan diganti: kalau KPI selama ini ikut file bulanan (dan bukan link KPI khusus),
+// sumber KPI pindah ke tab pertama file baru.
+async function kpiFollow(env, oldCfg, cfg, sheets) {
+  const saved = await env.STORE.get("v17:kpi:config", "json");
+  const cur = { ...KPI_DEFAULT, ...(saved || {}) };
+  if (cur.manual || !oldCfg || cur.token !== oldCfg.token || cur.token === cfg.token) return false;
+  const first = (sheets || [])[0];
+  if (!first) return false;
+  await env.STORE.put("v17:kpi:config", JSON.stringify({ token: cfg.token, sheetId: first.sheet_id, sheetTitle: first.title || "", range: cur.range, updatedAt: new Date().toISOString() }));
+  return true;
+}
+
+async function kpiGet(env, me) {
+  const sheet = await env.STORE.get("v17:kpi:sheet", "json");
+  const lead = allowed(me, "lead");
+  const out = { ok: true, sheet: sheet ? { sheetTitle: sheet.sheetTitle, range: sheet.range, headers: sheet.headers, rows: sheet.rows, fetchedAt: sheet.fetchedAt } : null, canRefresh: lead };
+  if (lead) {
+    const h = await healthLoad(env);
+    const s = HC.svc.larkKpi || (h.services.larkKpi && { ok: h.services.larkKpi.ok, error: h.services.larkKpi.lastError });
+    if (s && s.ok === false) out.error = s.error || "";
+    const kc = await kpiConfig(env);
+    out.source = { sheetId: kc.sheetId, sheetTitle: kc.sheetTitle || "", range: kc.range, manual: !!kc.manual };
+  }
+  return out;
+}
+
+let lastKpiManual = 0;
+async function kpiManual(env, me) {
+  if (Date.now() - lastKpiManual < MANUAL_COOLDOWN_MS) {
+    const r = await kpiGet(env, me);
+    r.note = "KPI baru ditarik kurang dari 5 menit lalu. Coba lagi sebentar lagi.";
+    return r;
+  }
+  lastKpiManual = Date.now();
+  try {
+    await track("larkKpi", () => kpiSync(env, { manual: true }));
+  } finally {
+    await healthFlush(env).catch(() => {});
+  }
+  return kpiGet(env, me);
+}
+
+// ----- Kesehatan sistem dan kuota (khusus Ray) -----
+async function metaTokenCheck(env) {
+  const tokens = await igTokens(env);
+  const now = Date.now();
+  const res = {};
+  const warns = [];
+  const soon = (ms) => ms && ms - now <= 7 * 864e5;
+  const daysLeft = (ms) => Math.max(0, Math.ceil((ms - now) / 864e5));
+  for (const acc of IG_ACCOUNTS) {
+    const t = tokens[acc];
+    if (!t) continue;
+    if (t.kind !== "fb") {
+      // Token login Instagram: masa berlaku 60 hari, diperpanjang otomatis oleh igRefreshTokens.
+      res[acc] = { kind: "ig", valid: !t.error, expiresAt: t.expiresAt || null, dataAccessUntil: null, scopes: [], checkedAt: now, error: t.error || "" };
+      if (soon(t.expiresAt)) warns.push([acc, `Token Instagram ${acc} habis dalam ${daysLeft(t.expiresAt)} hari dan belum berhasil diperpanjang. Sambungkan ulang token di Pengaturan.`]);
+      continue;
+    }
+    const r = { kind: "fb", valid: null, expiresAt: null, dataAccessUntil: null, scopes: [], checkedAt: now, error: "" };
+    try {
+      const u = new URL(`${FB_HOST}/${IG_VER}/debug_token`);
+      u.searchParams.set("input_token", t.token);
+      u.searchParams.set("access_token", t.token);
+      const resp = await fetch(u.toString());
+      const d = await resp.json().catch(() => ({}));
+      if (d.error) {
+        r.valid = d.error.code === 190 ? false : null;
+        r.error = String(d.error.message || `HTTP ${resp.status}`).slice(0, 200);
+      } else {
+        const x = d.data || {};
+        r.valid = x.is_valid === true;
+        r.expiresAt = x.expires_at ? x.expires_at * 1000 : null; // 0 = tidak kedaluwarsa
+        r.dataAccessUntil = x.data_access_expires_at ? x.data_access_expires_at * 1000 : null;
+        r.scopes = (x.scopes || []).slice(0, 15);
+        if (x.error) r.error = String(x.error.message || "").slice(0, 200);
+      }
+    } catch (e) {
+      r.error = String(e.message || e).slice(0, 200);
+    }
+    res[acc] = r;
+    if (r.valid === false) warns.push([acc, `Token Instagram ${acc} tidak valid lagi${r.error ? ` (${r.error})` : ""}. Sambungkan ulang token di Pengaturan.`]);
+    else if (soon(r.dataAccessUntil)) warns.push([acc, `Batas akses data token Instagram ${acc} tinggal ${daysLeft(r.dataAccessUntil)} hari. Buat ulang token di Meta for Developers lalu sambungkan di Pengaturan.`]);
+    else if (soon(r.expiresAt)) warns.push([acc, `Token Instagram ${acc} kedaluwarsa dalam ${daysLeft(r.expiresAt)} hari. Buat ulang token lalu sambungkan di Pengaturan.`]);
+  }
+  await healthFlush(env, { mutate: (h) => { h.metaTokens = res; h.metaCheckedAt = now; } });
+  for (const [acc, text] of warns) await systemWarn(env, `token:${acc}`, text).catch(() => {});
+  return res;
+}
+
+async function healthInfo(env) {
+  const h = await healthLoad(env);
+  const day = wibDay(), month = wibMonth();
+  const quota = {
+    kvDay: day,
+    kvWrites: (h.quota.kvDay === day ? h.quota.kvWrites || 0 : 0) + HC.kv,
+    kvLimit: 1000,
+    larkMonth: month,
+    larkCalls: (h.quota.larkMonth === month ? h.quota.larkCalls || 0 : 0) + HC.lark,
+    larkLimit: 10000,
+  };
+  const [cache, cal, ep, kpi, app, tokens, cfg, g] = await Promise.all([
+    env.STORE.get("cache", "json"), env.STORE.get("calcache", "json"), env.STORE.get("epcache", "json"),
+    env.STORE.get("v17:kpi:sheet", "json"), env.STORE.get("v17:app:latest", "json"), igTokens(env),
+    env.STORE.get("config", "json"), getGoogleConfig(env),
+  ]);
+  const igData = {};
+  for (const acc of IG_ACCOUNTS) igData[acc] = await env.STORE.get(`ig:data:${acc}`, "json");
+  const dataAt = {
+    larkSheet: cache && cache.fetchedAt, larkKpi: kpi && kpi.fetchedAt, googleCal: cal && cal.fetchedAt, googleEp: ep && ep.fetchedAt,
+    igAAB: igData.AAB && igData.AAB.updatedAt ? new Date(igData.AAB.updatedAt).toISOString() : null,
+    igNUSANTARA: igData.NUSANTARA && igData.NUSANTARA.updatedAt ? new Date(igData.NUSANTARA.updatedAt).toISOString() : null,
+    appRelease: app && app.seenAt,
+  };
+  const configured = { larkSheet: !!cfg, larkKpi: !!cfg, googleCal: !!g.calendar, googleEp: !!g.ep, igAAB: !!tokens.AAB, igNUSANTARA: !!tokens.NUSANTARA, appRelease: true };
+  const services = {};
+  for (const [name, label] of Object.entries(HEALTH_SERVICES)) {
+    const s = { ...(h.services[name] || {}) };
+    const p = HC.svc[name];
+    if (p) { s.ok = p.ok; if (p.ok) s.lastOkAt = p.at; else { s.lastErrAt = p.at; s.lastError = p.error; } }
+    services[name] = { label, configured: configured[name], ok: s.ok ?? null, lastOkAt: s.lastOkAt || null, lastErrAt: s.lastErrAt || null, lastError: s.lastError || "", dataAt: dataAt[name] || null };
+  }
+  const metaTokens = {};
+  for (const acc of IG_ACCOUNTS) {
+    const t = tokens[acc];
+    metaTokens[acc] = t ? { connected: true, kind: t.kind === "fb" ? "fb" : "ig", syncError: t.error || "", ...(h.metaTokens[acc] || {}) } : { connected: false };
+  }
+  return { ok: true, quota, services, errors: h.errors, metaTokens, metaCheckedAt: h.metaCheckedAt || null, app: app || null, updatedAt: h.updatedAt || null };
+}
+
+async function healthCheckNow(env) {
+  const h = await healthLoad(env);
+  if (h.manualAt && Date.now() - h.manualAt < MANUAL_COOLDOWN_MS) {
+    const r = await healthInfo(env);
+    r.note = "Baru dicek kurang dari 5 menit lalu. Coba lagi sebentar lagi.";
+    return r;
+  }
+  await track("appRelease", () => appLatestCheck(env)).catch(() => {});
+  await metaTokenCheck(env).catch(() => {});
+  await healthFlush(env, { mutate: (x) => { x.manualAt = Date.now(); } });
+  return healthInfo(env);
+}
+
+// ----- Setup Bulan Baru dan snapshot MoM (khusus Ray) -----
+async function setupValidate(env, body) {
+  const larkUrl = clean(body.larkUrl), calUrl = clean(body.calendarUrl), epUrl = clean(body.epUrl), kpiUrl = clean(body.kpiUrl);
+  const skip = (message) => ({ status: "skip", message });
+  const larkJob = (async () => {
+    if (!larkUrl) return skip("Tidak diisi. File Lark sekarang tetap dipakai.");
+    try {
+      const { cfg, warnings, sheets } = await checkLark(env, larkUrl);
+      // KPI: dari link KPI kalau diisi, kalau tidak tab pertama file Lark ini.
+      let kpi;
+      try {
+        let src = kpiUrl ? kpiFromUrl(kpiUrl) : { token: cfg.token, sheetId: (sheets[0] || {}).sheet_id || "", sheetTitle: (sheets[0] || {}).title || "", range: KPI_DEFAULT.range };
+        if (src.token === cfg.token && src.sheetId) src.sheetTitle = (sheets.find((s) => s.sheet_id === src.sheetId) || {}).title || src.sheetTitle;
+        if (!src.sheetId || !src.sheetTitle) src = await kpiResolve(env, src);
+        const [vals] = await readRanges(env, { token: src.token }, [`${src.sheetId}!${src.range}`]);
+        const p = parseKpi(vals, rangeFirstRow(src.range));
+        kpi = p.rows.length
+          ? { status: "ok", sheetTitle: src.sheetTitle, rows: p.rows.length, headers: p.headers, message: `Tab "${src.sheetTitle}" ${src.range}: ${p.rows.length} baris.` }
+          : { status: "warn", sheetTitle: src.sheetTitle, rows: 0, headers: p.headers, message: `Tab "${src.sheetTitle}" ${src.range} masih kosong.` };
+      } catch (e) {
+        kpi = { status: "warn", message: `KPI belum bisa dibaca: ${e.message}` };
+      }
+      return { status: warnings.length || kpi.status !== "ok" ? "warn" : "ok", message: `Tab "${TAB_REPORT}" dan "${TAB_REQUEST}" ditemukan.`, aigcReady: !!cfg.aigcReady, warnings, kpi };
+    } catch (e) {
+      return { status: "error", message: e.message };
+    }
+  })();
+  // Google berurutan (kalender lalu EP) supaya token Google cukup diambil sekali.
+  const googleJob = (async () => {
+    const calendar = !calUrl ? skip("Tidak diisi. Content Calendar sekarang tetap dipakai.") : await checkCalendar(env, calUrl)
+      .then((c) => ({ status: c.warnings.length ? "warn" : "ok", message: `"${c.calendar.title}": ${c.calendar.tabs.length} tab content plan (${c.calendar.tabs.map((t) => t.title).join(", ")}).`, warnings: c.warnings }))
+      .catch((e) => ({ status: "error", message: e.message }));
+    const ep = !epUrl ? skip("Tidak diisi. EP sekarang tetap dipakai.") : await checkEp(env, epUrl, { withCount: true })
+      .then((r) => ({ status: r.slides ? "ok" : "warn", message: `"${r.ep.title}": ${r.slides} slide.`, warnings: r.slides ? [] : ["File EP belum berisi slide."] }))
+      .catch((e) => ({ status: "error", message: e.message }));
+    return { calendar, ep };
+  })();
+  const [larkRes, g] = await Promise.all([larkJob, googleJob]);
+  const all = [larkRes, g.calendar, g.ep];
+  return {
+    ok: true,
+    lark: larkRes,
+    calendar: g.calendar,
+    ep: g.ep,
+    ready: all.every((x) => x.status !== "error") && all.some((x) => x.status !== "skip"),
+    serviceAccount: serviceAccountEmail(env),
+    snapshotMonth: defaultSnapshotMonth(),
+    snapshotLabel: monthLabel(defaultSnapshotMonth()),
+  };
+}
+
+function serviceAccountEmail(env) {
+  try { return serviceAccount(env).client_email || ""; } catch { return ""; }
+}
+
+async function buildSnapshot(env, month) {
+  const cache = (await env.STORE.get("cache", "json")) || {};
+  const reqs = cache.requests || [];
+  const epc = await env.STORE.get("epcache", "json");
+  let ep = null;
+  if (epc && epc.configured) {
+    const dec = (await env.STORE.get(`epdec:${epc.id}`, "json")) || {};
+    ep = {
+      title: epc.title || "",
+      total: epc.items.length,
+      posted: epc.items.filter((i) => i.posted).length,
+      revisi: epc.items.filter((i) => !i.posted && dec[i.id] && dec[i.id].status === "REVISI").length,
+    };
+  }
+  const ig = {};
+  for (const acc of IG_ACCOUNTS) {
+    const d = await env.STORE.get(`ig:data:${acc}`, "json");
+    if (!d) continue;
+    const days = Object.entries(d.daily || {}).filter(([k]) => k.startsWith(month)).map(([, v]) => v || {});
+    const sum = (k) => days.reduce((a, v) => a + (Number(v[k]) || 0), 0);
+    ig[acc] = { followers: d.followers ?? null, views: sum("views"), reach: sum("reach"), interactions: sum("total_interactions"), days: days.length };
+  }
+  const kpi = await env.STORE.get("v17:kpi:sheet", "json");
+  return {
+    month,
+    label: monthLabel(month),
+    savedAt: new Date().toISOString(),
+    counts: cache.counts || {},
+    requests: { total: reqs.length, done: reqs.filter((r) => r.status === "done").length },
+    ep,
+    ig,
+    kpi: kpi ? { sheetTitle: kpi.sheetTitle, headers: kpi.headers, rows: kpi.rows } : null,
+  };
+}
+
+async function setupApply(env, body) {
+  const larkUrl = clean(body.larkUrl), calUrl = clean(body.calendarUrl), epUrl = clean(body.epUrl), kpiUrl = clean(body.kpiUrl);
+  const wantSnap = body.snapshot !== false;
+  if (!larkUrl && !calUrl && !epUrl && !kpiUrl && !wantSnap) throw fail("Isi minimal satu link.");
+  const month = clean(body.month) || defaultSnapshotMonth();
+  if (wantSnap && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw fail("Bulan snapshot harus berformat YYYY-MM, contoh 2026-11.");
+  const steps = [];
+  // 1. Snapshot dulu, dari data bulan yang sedang ditutup (sebelum link diganti).
+  if (wantSnap) {
+    const snap = await buildSnapshot(env, month);
+    const list = ((await env.STORE.get("v17:snapshots", "json")) || []).filter((s) => s.month !== month);
+    list.push(snap);
+    list.sort((a, b) => b.month.localeCompare(a.month));
+    await env.STORE.put("v17:snapshots", JSON.stringify(list.slice(0, SNAPSHOT_KEEP)));
+    steps.push({ step: "snapshot", status: "ok", message: `Snapshot ${snap.label} tersimpan.` });
+  }
+  // 2. Terapkan link baru lewat jalur lama (setConfig / setGoogleConfig) supaya perilakunya sama persis.
+  if (larkUrl) {
+    try {
+      const r = await setConfig(env, { url: larkUrl });
+      steps.push({ step: "lark", status: r.warnings.length ? "warn" : "ok", message: `Sheet Lark tersimpan. ${(r.requests || []).length} request terbaca.`, warnings: r.warnings });
+    } catch (e) { steps.push({ step: "lark", status: "error", message: e.message }); }
+  }
+  if (calUrl || epUrl) {
+    try {
+      const r = await setGoogleConfig(env, { calendarUrl: calUrl, epUrl });
+      const parts = [];
+      if (calUrl) parts.push(`${r.calendarRows ?? 0} baris Content Calendar`);
+      if (epUrl) parts.push(`${r.epItems ?? 0} slide EP`);
+      steps.push({ step: "google", status: r.warnings.length ? "warn" : "ok", message: `Google tersimpan: ${parts.join(", ")}.`, warnings: r.warnings });
+    } catch (e) { steps.push({ step: "google", status: "error", message: e.message }); }
+  }
+  // 3. KPI Tim: link khusus kalau diisi, kalau tidak ikut tab pertama file Lark baru (lewat kpiFollow).
+  if (kpiUrl) {
+    try { await env.STORE.put("v17:kpi:config", JSON.stringify(kpiFromUrl(kpiUrl))); } catch (e) { steps.push({ step: "kpi", status: "error", message: e.message }); }
+  }
+  if ((larkUrl || kpiUrl) && !steps.some((s) => s.step === "kpi")) {
+    try {
+      const k = await track("larkKpi", () => kpiSync(env, { manual: true }));
+      steps.push({ step: "kpi", status: k.rows.length ? "ok" : "warn", message: `KPI Tim dari tab "${k.sheetTitle}": ${k.rows.length} baris.` });
+    } catch (e) { steps.push({ step: "kpi", status: "warn", message: `KPI Tim belum bisa dibaca: ${e.message}` }); }
+  }
+  await healthFlush(env).catch(() => {});
+  return { ok: steps.every((s) => s.status !== "error"), steps };
+}
+
+async function snapshotsGet(env) {
+  return { ok: true, items: (await env.STORE.get("v17:snapshots", "json")) || [] };
+}
+
+// ----- Catatan Lead privat (khusus Ray) -----
+// Tidak pernah masuk Timeline (feed:*), activity, notif:*, atau /api/state.
+const noteMembers = () => Object.entries(MEMBERS).filter(([, m]) => m.block !== "lead").map(([id, m]) => ({ id, name: m.name, block: m.block }));
+
+async function leadNotesAll(env) {
+  return (await env.STORE.get("v17:leadnotes", "json")) || [];
+}
+
+async function leadNotesList(env, url) {
+  const all = await leadNotesAll(env);
+  const month = clean(url.searchParams.get("month"));
+  const member = clean(url.searchParams.get("member")).toLowerCase();
+  const items = all
+    .filter((n) => (!month || n.month === month) && (!member || n.member === member))
+    .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  return { ok: true, items, months: [...new Set(all.map((n) => n.month))].sort().reverse(), members: noteMembers(), categories: NOTE_CATS };
+}
+
+async function leadNoteSave(env, body) {
+  const month = clean(body.month);
+  const member = clean(body.member).toLowerCase();
+  const category = clean(body.category).toLowerCase();
+  const text = multiline(body.text, 2000);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw fail("Bulan harus berformat YYYY-MM.");
+  if (!noteMembers().some((m) => m.id === member)) throw fail("Pilih anggota tim.");
+  if (!NOTE_CATS.includes(category)) throw fail("Kategori harus Performance, Development, Potential, atau Arahan.");
+  if (!text) throw fail("Catatan masih kosong.");
+  const all = await leadNotesAll(env);
+  const now = new Date().toISOString();
+  let item;
+  if (clean(body.id)) {
+    item = all.find((n) => n.id === clean(body.id));
+    if (!item) throw fail("Catatan tidak ditemukan.", 404);
+    Object.assign(item, { month, member, category, text, updatedAt: now });
+  } else {
+    if (all.length >= LEAD_NOTES_MAX) throw fail("Catatan sudah terlalu banyak. Hapus catatan lama dulu.");
+    item = { id: feedId(), month, member, category, text, createdAt: now, updatedAt: now };
+    all.push(item);
+  }
+  await env.STORE.put("v17:leadnotes", JSON.stringify(all));
+  return { ok: true, item };
+}
+
+async function leadNoteDelete(env, body) {
+  const id = clean(body.id);
+  const all = await leadNotesAll(env);
+  const next = all.filter((n) => n.id !== id);
+  if (!id || next.length === all.length) throw fail("Catatan tidak ditemukan.", 404);
+  await env.STORE.put("v17:leadnotes", JSON.stringify(next));
+  return { ok: true };
 }
 
 // ---------- Helpers ----------

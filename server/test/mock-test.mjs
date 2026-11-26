@@ -1,5 +1,5 @@
 // Uji server dengan Lark tiruan (tidak memanggil Lark asli).
-import worker, { parseRequests, shortcode, normalizeContent, parseSpreadsheetToken, colIndex, normDate } from "../worker.js";
+import worker, { parseRequests, shortcode, normalizeContent, parseSpreadsheetToken, colIndex, normDate, parseKpi, parseLatestYml } from "../worker.js";
 import assert from "node:assert/strict";
 
 const SHEET = "PSUosgLcFh58JftjSZclS4FwgLe";
@@ -27,6 +27,12 @@ write(`${REPORT}!N6:P7`, [[1,"25/10/2026","REGIS PRINT A5"],[2,"26/10/2026","QCA
 set(REPORT,"G4",2);set(REPORT,"O4",2);set(REPORT,"T4",0);
 write(`${REQ}!A2:I4`, [[1,"04 November 2026","WIDI","Request logo plang","13 November 2026","link",null,"DONE",null],[2,"04 November 2026","RERE","PPT TikTok One",null,null,null,"PENDING",null],[3,"5-Nov-26","REFLY","Sticker 11.11",null,null,null,null,null]]);
 write(`${REQ}!A5:A20`, Array.from({length:16},(_,i)=>[4+i]));
+// Tab KPI tiruan (tab pertama file, v1.7): judul di baris 46, satu baris kosong di tengah, kolom H:I kosong.
+const KPI = "x1";
+grid[KPI] = {};
+write(`${KPI}!A46:G46`, [["No", "Nama", "Divisi", "Indikator", "Target", "Realisasi", "Capaian"]]);
+write(`${KPI}!A47:G49`, [[1, "Fitria", "Content", "Konten tayang", 40, 31, "78%"], [2, "Athallah", "Design", "Desain selesai", 60, 64, "107%"], [3, "Albar", "Video", "Video selesai", 30, 18, "60%"]]);
+write(`${KPI}!A51:G51`, [[4, "Rifqi", "AIGC", [{ type: "text", text: "Produksi " }, { type: "text", text: "AIGC" }], 50, 45, "90%"]]);
 
 // Instagram tiruan (v1.4)
 const igCalls = [];
@@ -104,11 +110,34 @@ async function pushMock(u, opts) {
   pushCalls.push({ url: u.toString(), auth: opts.headers.Authorization });
   return new Response(null, { status: u.pathname.includes("gone") ? 410 : 201 });
 }
+// v1.7: debug_token Meta, latest.yml rilis GitHub, dan tab Lark yang ditolak/tidak ada.
+const debugCalls = [];
+const DEBUG_BAD = new Set();
+function debugMock(u) {
+  const tok = u.searchParams.get("input_token");
+  assert.equal(u.searchParams.get("access_token"), tok);
+  debugCalls.push(tok.slice(0, 8));
+  if (!FB[tok]) return new Response(JSON.stringify({ error: { message: "Invalid OAuth access token", code: 190 } }), { status: 400 });
+  if (DEBUG_BAD.has(tok)) return new Response(JSON.stringify({ data: { is_valid: false, expires_at: 0, error: { message: "Session has been invalidated", code: 190 } } }));
+  return new Response(JSON.stringify({ data: { is_valid: true, type: "SYSTEM_USER", expires_at: 0, data_access_expires_at: 0, scopes: ["instagram_basic", "instagram_manage_insights"] } }));
+}
+let GH_LATEST = "1.6.1";
+const ghCalls = [];
+function ghMock(u, opts) {
+  assert.equal(u.pathname, "/creative273/creative-aab/releases/latest/download/latest.yml");
+  assert.ok(opts.headers["User-Agent"]);
+  ghCalls.push(GH_LATEST);
+  return new Response(`version: ${GH_LATEST}\nfiles:\n  - url: Creative-AAB-Setup-${GH_LATEST}.exe\n`, { status: 200 });
+}
+const LARK_DENY = new Set();
+const rangesRead = [];
 globalThis.fetch = async (url, opts = {}) => {
   const u = new URL(url);
   if (u.host === "fcm.googleapis.com" || u.host === "web.push.apple.com") return pushMock(u, opts);
   if (u.host === "graph.instagram.com") return igMock(u);
+  if (u.host === "graph.facebook.com" && u.pathname === "/v25.0/debug_token") return debugMock(u);
   if (u.host === "graph.facebook.com") return fbMock(u);
+  if (u.host === "github.com") return ghMock(u, opts);
   const body = opts.body ? JSON.parse(opts.body) : null;
   calls.push(`${opts.method || "GET"} ${u.pathname}`);
   const ok = (data) => new Response(JSON.stringify({ code: 0, msg: "success", data }));
@@ -120,6 +149,10 @@ globalThis.fetch = async (url, opts = {}) => {
   if (u.pathname.endsWith("/sheets/query")) return ok({ sheets: [{ sheet_id: "x1", title: "KPI NOVEMBER 2026" }, { sheet_id: REPORT, title: "Creative Report Analytic" }, { sheet_id: REQ, title: "REQUEST CREATIVE" }] });
   if (u.pathname.endsWith("/values_batch_get")) {
     const ranges = u.searchParams.get("ranges").split(",");
+    rangesRead.push(...ranges);
+    const sids = ranges.map((r) => r.split("!")[0]);
+    if (sids.some((s) => LARK_DENY.has(s))) return new Response(JSON.stringify({ code: 91403, msg: "Forbidden" }));
+    if (sids.some((s) => !grid[s])) return new Response(JSON.stringify({ code: 1310214, msg: "sheet not found" }));
     return ok({ valueRanges: ranges.map((r) => ({ range: r, values: read(r) })) });
   }
   if (u.pathname.endsWith("/values_batch_update")) { body.valueRanges.forEach((vr) => write(vr.range, vr.values)); return ok({}); }
@@ -610,7 +643,7 @@ assert.equal((await unread(T.zahra)).unread, 0, "tag lama tidak dikirim ulang");
 r = await call("GET", "/api/notif");
 assert.ok(r.data.items.some((n) => n.type === "mention" && n.by === "albar2"));
 
-// 21. Minta semua update (v1.5.2)
+// 21. Versi aplikasi tiap akun dicatat (v1.5.2). v1.7: tombol manual "minta semua update" dihapus.
 const callV = async (path, token, v) => {
   const res = await worker.fetch(new Request("https://x.workers.dev" + path, { headers: { Authorization: `Bearer ${token}`, "X-App-Version": v } }), env, {});
   return res.json();
@@ -620,16 +653,9 @@ await callV("/api/state", T.aqil, "1.5.2");
 const putsBefore = kvWrites();
 await callV("/api/state", T.zahra, "1.5.1");
 assert.equal(kvWrites() - putsBefore, 0, "versi sama tidak ditulis ulang");
-assert.equal((await call("POST", "/api/app/update-request", { version: "1.5.2" }, T.zahra)).status, 403, "hanya Ray");
-assert.equal((await call("POST", "/api/app/update-request", { version: "abc" })).status, 400);
-await call("POST", "/api/notif/read", {}, T.zahra); await call("POST", "/api/notif/read", {}, T.aqil);
-r = await call("POST", "/api/app/update-request", { version: "1.5.2" });
-assert.equal(r.status, 200, JSON.stringify(r.data));
-assert.ok(r.data.sent.includes("zahra")); assert.ok(!r.data.sent.includes("aqil"), "yang sudah versi terbaru tidak dikirimi"); assert.ok(!r.data.sent.includes("ray"));
-assert.equal(r.data.versions.find((x) => x.username === "zahra").version, "1.5.1");
-const nu = (await call("GET", "/api/notif", null, T.zahra)).data.items[0];
-assert.equal(nu.type, "update"); assert.equal(nu.version, "1.5.2"); assert.match(nu.text, /Cek pembaruan/);
-assert.equal((await call("GET", "/api/notif", null, T.aqil)).data.unread, 0);
+assert.equal((await call("POST", "/api/app/update-request", { version: "1.5.2" })).status, 404, "rute manual sudah dihapus");
+assert.equal((await call("POST", "/api/app/update-request", { version: "1.5.2" }, T.zahra)).status, 404);
+assert.ok(!(await call("GET", "/api/notif", null, T.zahra)).data.items.some((n) => n.type === "update"), "tidak ada notifikasi update manual");
 r = await call("GET", "/api/app/versions");
 assert.equal(r.data.versions.find((x) => x.username === "aqil").version, "1.5.2");
 
@@ -721,6 +747,220 @@ assert.equal(r.data.versions.find((x) => x.username === "aqil").version, "1.5.2"
   // berhenti langganan
   assert.equal((await call("POST", "/api/push/unsubscribe", { endpoint: "https://fcm.googleapis.com/fcm/send/zahra1" }, T.zahra)).status, 200);
   assert.equal(JSON.parse(kv.get("push:zahra")).length, 0);
+}
+
+// 24. v1.7
+{
+  const cron = async (t) => { let p; await worker.scheduled({ scheduledTime: t }, env, { waitUntil: (x) => { p = x; } }); await p; };
+  const putsOf = async (key, fn) => {
+    const orig = env.STORE.put; let n = 0;
+    env.STORE.put = async (k, v, o) => { if (k === key) n++; return orig(k, v, o); };
+    try { await fn(); } finally { env.STORE.put = orig; }
+    return n;
+  };
+  const kpiReads = () => rangesRead.filter((x) => /!A46:I67$/.test(x)).length;
+
+  // a. Helper
+  assert.equal(parseLatestYml("version: 1.7.0\nfiles:\n  - url: x.exe\n"), "1.7.0");
+  assert.equal(parseLatestYml("version: '1.10.2'\n"), "1.10.2");
+  assert.equal(parseLatestYml("tidak ada"), "");
+  const pk = parseKpi([["Nama", "Target", null, ""], [], ["A", 1, null, null], [null, null, null, null], ["B", "2", null, null]]);
+  assert.deepEqual(pk.headers, ["Nama", "Target"]);
+  assert.deepEqual(pk.rows.map((x) => [x.row, x.cells]), [[48, ["A", "1"]], [50, ["B", "2"]]]);
+  assert.deepEqual(parseKpi([]).rows, []);
+
+  // b. KPI Tim: cron jam kerja menit 00 sudah menarik tab pertama (id OAAqNU tidak ada di file tiruan)
+  let k = await call("GET", "/api/v17/kpi", null, T.zahra);
+  assert.equal(k.status, 200, JSON.stringify(k.data));
+  assert.equal(k.data.sheet.sheetTitle, "KPI NOVEMBER 2026");
+  assert.deepEqual(k.data.sheet.headers, ["No", "Nama", "Divisi", "Indikator", "Target", "Realisasi", "Capaian"], "kolom kosong H:I dibuang");
+  assert.equal(k.data.sheet.rows.length, 4, "baris kosong dilewati");
+  assert.deepEqual(k.data.sheet.rows[3].cells, ["4", "Rifqi", "AIGC", "Produksi AIGC", "50", "45", "90%"]);
+  assert.equal(k.data.canRefresh, false); assert.ok(!k.data.source, "sumber hanya untuk Ray");
+  assert.equal(JSON.parse(kv.get("v17:kpi:config")).sheetId, "x1");
+  for (const t of [T.aqil, T.albar2]) assert.equal((await call("GET", "/api/v17/kpi", null, t)).status, 200, "semua akun bisa lihat KPI");
+  // Isi sama: tidak ditulis ulang. Menit 10: tidak ditarik sama sekali.
+  let n0 = kpiReads();
+  assert.equal(await putsOf("v17:kpi:sheet", () => cron(WORK_TIME)), 0, "KPI sama tidak ditulis ulang");
+  assert.equal(kpiReads() - n0, 1, "menit 00: satu kali baca KPI");
+  n0 = kpiReads();
+  await cron(WORK_TIME + 10 * 60000);
+  assert.equal(kpiReads() - n0, 0, "menit 10: KPI tidak ditarik");
+  await cron(Date.UTC(2026, 10, 29, 13, 0));
+  assert.equal(kpiReads() - n0, 0, "Minggu: KPI tidak ditarik");
+  // Isi berubah: ditulis
+  set(KPI, "F47", 35); set(KPI, "G47", "88%");
+  assert.equal(await putsOf("v17:kpi:sheet", () => cron(WORK_TIME)), 1);
+  assert.equal((await call("GET", "/api/v17/kpi", null, T.zahra)).data.sheet.rows[0].cells[6], "88%");
+  // Tarik ulang manual: hanya Ray, jeda 5 menit
+  assert.equal((await call("POST", "/api/v17/kpi/refresh", {}, T.zahra)).status, 403);
+  n0 = kpiReads();
+  k = await call("POST", "/api/v17/kpi/refresh", {});
+  assert.equal(k.status, 200, JSON.stringify(k.data)); assert.equal(k.data.canRefresh, true); assert.equal(k.data.source.sheetTitle, "KPI NOVEMBER 2026");
+  assert.equal(kpiReads() - n0, 1);
+  k = await call("POST", "/api/v17/kpi/refresh", {});
+  assert.match(k.data.note, /5 menit/); assert.equal(kpiReads() - n0, 1, "klik beruntun tidak memanggil Lark");
+
+  // c. Versi aplikasi terbaru ikut di /api/state, KV hanya ditulis saat versi berubah
+  let s = await call("GET", "/api/state", null, T.zahra);
+  assert.equal(s.data.latestApp.version, "1.6.1");
+  GH_LATEST = "1.7.0";
+  assert.equal(await putsOf("v17:app:latest", () => cron(WORK_TIME)), 1);
+  assert.equal(await putsOf("v17:app:latest", () => cron(WORK_TIME)), 0, "versi sama tidak ditulis ulang");
+  const g0 = ghCalls.length;
+  await cron(WORK_TIME + 20 * 60000);
+  assert.equal(ghCalls.length, g0, "cek rilis hanya di menit 00");
+  s = await call("GET", "/api/state", null, T.zahra);
+  assert.deepEqual(s.data.latestApp, { version: "1.7.0", url: "https://github.com/creative273/creative-aab/releases/tag/v1.7.0" });
+  assert.equal((await call("POST", "/api/refresh", {})).data.latestApp.version, "1.7.0");
+
+  // d. Kesehatan sistem dan kuota: khusus Ray
+  assert.equal((await call("GET", "/api/v17/health", null, T.zahra)).status, 403);
+  assert.equal((await call("POST", "/api/v17/health/check", {}, T.zahra)).status, 403);
+  let h = await call("GET", "/api/v17/health");
+  assert.equal(h.status, 200, JSON.stringify(h.data));
+  assert.ok(h.data.quota.kvWrites > 0 && h.data.quota.kvLimit === 1000, JSON.stringify(h.data.quota));
+  assert.ok(h.data.quota.larkCalls > 0 && h.data.quota.larkLimit === 10000);
+  assert.equal(h.data.services.larkSheet.ok, true); assert.equal(h.data.services.larkKpi.ok, true); assert.equal(h.data.services.appRelease.ok, true);
+  assert.equal(h.data.services.igAAB.ok, true);
+  assert.ok(h.data.services.larkSheet.dataAt && h.data.services.larkKpi.dataAt);
+  assert.ok(!JSON.stringify(h.data).includes("EAA"), "token tidak bocor");
+  // Error layanan tercatat sekali, lalu pulih
+  LARK_DENY.add(KPI);
+  await cron(WORK_TIME); await cron(WORK_TIME);
+  h = await call("GET", "/api/v17/health");
+  assert.equal(h.data.services.larkKpi.ok, false); assert.match(h.data.services.larkKpi.lastError, /Add Apps/);
+  assert.equal(h.data.errors.filter((e) => e.service === "larkKpi").length, 1, "error yang sama tidak dicatat berulang");
+  assert.match((await call("GET", "/api/v17/kpi")).data.error, /Add Apps/);
+  assert.ok((await call("GET", "/api/v17/kpi", null, T.zahra)).data.sheet, "data lama tetap tampil saat error");
+  LARK_DENY.delete(KPI);
+  await cron(WORK_TIME);
+  assert.equal((await call("GET", "/api/v17/health")).data.services.larkKpi.ok, true);
+  // Status token Meta (EAA): cek manual, tidak kedaluwarsa
+  const d0 = debugCalls.length;
+  h = await call("POST", "/api/v17/health/check", {});
+  assert.equal(h.status, 200, JSON.stringify(h.data));
+  assert.equal(debugCalls.length - d0, 2, "satu panggilan debug_token per akun");
+  assert.equal(h.data.metaTokens.AAB.kind, "fb"); assert.equal(h.data.metaTokens.AAB.valid, true); assert.equal(h.data.metaTokens.AAB.expiresAt, null);
+  assert.ok(h.data.metaTokens.AAB.scopes.includes("instagram_manage_insights"));
+  h = await call("POST", "/api/v17/health/check", {});
+  assert.match(h.data.note, /5 menit/); assert.equal(debugCalls.length - d0, 2, "jeda 5 menit");
+  // Token tidak valid: Ray dapat peringatan sekali sehari, tim tidak
+  DEBUG_BAD.add("EAAbig-hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh");
+  const resetManual = () => { const x = JSON.parse(kv.get("v17:health")); x.manualAt = 0; kv.set("v17:health", JSON.stringify(x)); };
+  const sysCount = async (tok) => ((await call("GET", "/api/notif", null, tok)).data.items || []).filter((n) => n.type === "system").length;
+  resetManual();
+  h = await call("POST", "/api/v17/health/check", {});
+  assert.equal(h.data.metaTokens.NUSANTARA.valid, false); assert.equal(h.data.metaTokens.AAB.valid, true);
+  assert.equal(await sysCount(TOK), 1);
+  const sys = (await call("GET", "/api/notif")).data.items.find((n) => n.type === "system");
+  assert.match(sys.text, /NUSANTARA tidak valid/);
+  resetManual();
+  await call("POST", "/api/v17/health/check", {});
+  assert.equal(await sysCount(TOK), 1, "peringatan yang sama paling banyak sekali sehari");
+  assert.equal(await sysCount(T.zahra), 0, "hanya Ray");
+  DEBUG_BAD.clear();
+  // Cek token harian otomatis jam 08.00 WIB
+  const d1 = debugCalls.length;
+  await cron(Date.UTC(2026, 10, 25, 1, 0));
+  assert.equal(debugCalls.length - d1, 2);
+  await cron(Date.UTC(2026, 10, 25, 2, 0));
+  assert.equal(debugCalls.length - d1, 2, "jam lain tidak cek token");
+
+  // e. Setup Bulan Baru: validasi tidak mengubah apa pun
+  const cfgBefore = kv.get("config"), gBefore = kv.get("gconfig");
+  assert.equal((await call("POST", "/api/v17/setup/validate", { larkUrl: "x" }, T.zahra)).status, 403);
+  let v = await call("POST", "/api/v17/setup/validate", { larkUrl: "https://x.larksuite.com/sheets/PSUosgLcFh58JftjSZclS4FwgLe", calendarUrl: "https://docs.google.com/spreadsheets/d/abcdefghijklmnopqrstuvwxyz123/edit", epUrl: "bukan link" });
+  assert.equal(v.status, 200, JSON.stringify(v.data));
+  assert.equal(v.data.lark.status, "warn", "blok AIGC belum ada (tes 11)");
+  assert.equal(v.data.lark.kpi.status, "ok"); assert.equal(v.data.lark.kpi.rows, 4); assert.equal(v.data.lark.kpi.sheetTitle, "KPI NOVEMBER 2026");
+  assert.equal(v.data.calendar.status, "error"); assert.match(v.data.calendar.message, /GOOGLE_SA/);
+  assert.equal(v.data.ep.status, "error"); assert.match(v.data.ep.message, /Google Slides/);
+  assert.equal(v.data.ready, false);
+  assert.match(v.data.snapshotMonth, /^\d{4}-\d{2}$/);
+  v = await call("POST", "/api/v17/setup/validate", { larkUrl: "https://x.larksuite.com/sheets/PSUosgLcFh58JftjSZclS4FwgLe" });
+  assert.equal(v.data.ready, true); assert.equal(v.data.calendar.status, "skip");
+  v = await call("POST", "/api/v17/setup/validate", { larkUrl: "bukan-link" });
+  assert.equal(v.data.lark.status, "error"); assert.equal(v.data.ready, false);
+  assert.equal(kv.get("config"), cfgBefore, "validasi tidak mengubah config");
+  assert.equal(kv.get("gconfig"), gBefore);
+  assert.ok(!kv.get("v17:snapshots"));
+
+  // f. Setup Bulan Baru: terapkan, snapshot disimpan dulu
+  assert.equal((await call("POST", "/api/v17/setup/apply", { larkUrl: "x" }, T.zahra)).status, 403);
+  assert.equal((await call("POST", "/api/v17/setup/apply", { month: "2026-13", larkUrl: "https://x.larksuite.com/sheets/PSUosgLcFh58JftjSZclS4FwgLe" })).status, 400);
+  let a = await call("POST", "/api/v17/setup/apply", { month: "2026-10", snapshot: true });
+  assert.equal(a.status, 200, JSON.stringify(a.data));
+  a = await call("POST", "/api/v17/setup/apply", { month: "2026-11", larkUrl: "https://x.larksuite.com/sheets/PSUosgLcFh58JftjSZclS4FwgLe?sheet=DkyyeC" });
+  assert.equal(a.status, 200, JSON.stringify(a.data));
+  assert.deepEqual(a.data.steps.map((x) => x.step), ["snapshot", "lark", "kpi"]);
+  assert.equal(a.data.steps[0].status, "ok"); assert.equal(a.data.steps[2].status, "ok");
+  assert.equal((await call("GET", "/api/v17/snapshots", null, T.zahra)).status, 403);
+  const snaps = (await call("GET", "/api/v17/snapshots")).data.items;
+  assert.deepEqual(snaps.map((x) => x.month), ["2026-11", "2026-10"]);
+  assert.equal(snaps[0].label, "November 2026");
+  assert.equal(snaps[0].kpi.rows.length, 4); assert.ok(snaps[0].counts.content >= 0); assert.ok(snaps[0].requests.total > 0);
+  assert.equal(snaps[0].ig.AAB.followers, 19400);
+  // Snapshot bulan yang sama ditimpa, bukan ditambah
+  await call("POST", "/api/v17/setup/apply", { month: "2026-11" });
+  assert.equal((await call("GET", "/api/v17/snapshots")).data.items.length, 2);
+  // KPI ikut file Lark bulan baru (tab pertama), lalu kembali
+  await call("POST", "/api/config", { url: "https://x.larksuite.com/sheets/BARUdesember2026xyz?sheet=DkyyeC" });
+  assert.equal(JSON.parse(kv.get("v17:kpi:config")).token, "BARUdesember2026xyz");
+  assert.equal(JSON.parse(kv.get("v17:kpi:config")).sheetId, "x1");
+  await call("POST", "/api/config", { url: "https://x.larksuite.com/sheets/PSUosgLcFh58JftjSZclS4FwgLe" });
+  assert.equal(JSON.parse(kv.get("v17:kpi:config")).token, SHEET);
+  // Link KPI khusus: tidak ikut berpindah lagi
+  a = await call("POST", "/api/v17/setup/apply", { snapshot: false, kpiUrl: `https://x.larksuite.com/sheets/${SHEET}?sheet=x1` });
+  assert.equal(a.data.steps[0].step, "kpi"); assert.equal(a.data.steps[0].status, "ok");
+  assert.equal(JSON.parse(kv.get("v17:kpi:config")).manual, true);
+  await call("POST", "/api/config", { url: "https://x.larksuite.com/sheets/BARUdesember2026xyz" });
+  assert.equal(JSON.parse(kv.get("v17:kpi:config")).token, SHEET, "link KPI khusus tidak berpindah");
+  await call("POST", "/api/config", { url: "https://x.larksuite.com/sheets/PSUosgLcFh58JftjSZclS4FwgLe" });
+
+  // g. Catatan Lead privat
+  const NOTE = "Rahasia: Fitria siap pegang campaign besar";
+  assert.equal((await call("GET", "/api/v17/lead-notes", null, T.zahra)).status, 403);
+  assert.equal((await call("POST", "/api/v17/lead-notes/save", { month: "2026-11", member: "fitria", category: "potential", text: "x" }, T.zahra)).status, 403);
+  assert.equal((await call("POST", "/api/v17/lead-notes/delete", { id: "x" }, T.aqil)).status, 403);
+  assert.equal((await call("POST", "/api/v17/lead-notes/save", { month: "2026-11", member: "fitria", category: "gosip", text: "x" })).status, 400);
+  assert.equal((await call("POST", "/api/v17/lead-notes/save", { month: "2026-11", member: "ray", category: "arahan", text: "x" })).status, 400);
+  assert.equal((await call("POST", "/api/v17/lead-notes/save", { month: "11-2026", member: "fitria", category: "arahan", text: "x" })).status, 400);
+  assert.equal((await call("POST", "/api/v17/lead-notes/save", { month: "2026-11", member: "fitria", category: "arahan", text: "   " })).status, 400);
+  const feedBefore = kv.get("feed:index"), actBefore = kv.get("activity");
+  let ln = await call("POST", "/api/v17/lead-notes/save", { month: "2026-11", member: "fitria", category: "potential", text: NOTE });
+  assert.equal(ln.status, 200, JSON.stringify(ln.data));
+  const noteId = ln.data.item.id;
+  await call("POST", "/api/v17/lead-notes/save", { month: "2026-11", member: "athallah", category: "performance", text: "Desain tepat waktu" });
+  await call("POST", "/api/v17/lead-notes/save", { month: "2026-10", member: "fitria", category: "development", text: "Belajar copywriting" });
+  ln = await call("GET", "/api/v17/lead-notes?month=2026-11");
+  assert.equal(ln.data.items.length, 2); assert.deepEqual(ln.data.months, ["2026-11", "2026-10"]);
+  assert.ok(!ln.data.members.some((m) => m.id === "ray")); assert.deepEqual(ln.data.categories, ["performance", "development", "potential", "arahan"]);
+  assert.equal((await call("GET", "/api/v17/lead-notes?member=fitria")).data.items.length, 2);
+  ln = await call("POST", "/api/v17/lead-notes/save", { id: noteId, month: "2026-11", member: "fitria", category: "potential", text: NOTE + " (Q1)" });
+  assert.equal(ln.data.item.id, noteId); assert.match(ln.data.item.text, /Q1/);
+  assert.equal((await call("GET", "/api/v17/lead-notes")).data.items.length, 3, "ubah tidak menambah");
+  // Tidak pernah terlihat tim dan tidak masuk Timeline, activity, notifikasi, atau state
+  assert.equal(kv.get("feed:index"), feedBefore, "tidak masuk Timeline"); assert.equal(kv.get("activity"), actBefore, "tidak masuk activity");
+  for (const t of [T.zahra, T.aqil, TOK]) {
+    for (const p of ["/api/state", "/api/feed", "/api/notif"]) assert.ok(!JSON.stringify((await call("GET", p, null, t)).data).includes("Rahasia"), p);
+  }
+  assert.ok(!JSON.stringify((await call("GET", "/api/dashboard")).data).includes("Rahasia"));
+  assert.equal((await call("POST", "/api/v17/lead-notes/delete", { id: "ngawur" })).status, 404);
+  assert.equal((await call("POST", "/api/v17/lead-notes/delete", { id: noteId })).status, 200);
+  assert.equal((await call("GET", "/api/v17/lead-notes")).data.items.length, 2);
+
+  // h. Anggaran tulis KV: cron jam kerja tanpa perubahan data tetap hemat
+  await cron(WORK_TIME + 10 * 60000);
+  let w0 = kvWrites();
+  await cron(WORK_TIME + 10 * 60000);
+  const perRun = kvWrites() - w0;
+  w0 = kvWrites();
+  await cron(WORK_TIME);
+  const perHourly = kvWrites() - w0;
+  assert.ok(perRun <= 3, "tulis KV per cron 10 menit: " + perRun);
+  assert.ok(perHourly <= 4, "tulis KV per cron menit 00: " + perHourly);
+  console.log(`v1.7: tulis KV per cron biasa ${perRun}, per cron menit 00 ${perHourly}`);
 }
 
 console.log("SEMUA TES LULUS. Panggilan Lark tiruan:", calls.length);
