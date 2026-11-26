@@ -10,6 +10,7 @@ const PUSH_LABELS = [
   ["comment", "Komentar di postinganmu", ""],
   ["reply", "Balasan diskusi", "Komentar baru di postingan yang kamu komentari"],
   ["request", "Request baru", "Khusus Ray, request yang perlu approval"],
+  ["epnew", "EP baru", "Khusus Ray, slide EP baru yang perlu approval"],
   ["ep", "Keputusan EP", "OKE atau revisi dari Ray"],
   ["react", "Reaksi", "Saat postinganmu diberi reaksi"],
   ["update", "Minta update aplikasi laptop", ""],
@@ -109,12 +110,13 @@ function notifLine(n) {
     case "reply": return `${who} juga mengomentari postingan ${n.postBy ? esc(shortOf(n.postBy)) : ""}${quote}`;
     case "react": return `${who} memberi ${REACT[n.reaction] || "👍"} pada postinganmu${quote}`;
     case "request": return `Request baru dari <b>${esc(n.requester || "user")}</b>${quote}`;
+    case "epnew": return `EP baru perlu approval: “${esc(n.text)}”${n.upload ? ` · upload ${esc(n.upload)}` : ""}`;
     case "ep": return n.status === "OKE" ? `${who} meng-OKE EP “${esc(n.text)}”` : `${who} minta revisi EP “${esc(n.text)}”${n.note ? `: ${esc(n.note)}` : ""}`;
     case "update": return `${who} minta kamu update aplikasi laptop ke v${esc(n.version)}`;
     default: return `${who} berinteraksi denganmu`;
   }
 }
-const notifIcon = (n) => ({ mention: ["@", "#8BBAF2"], comment: ["💬", "#A8E6CF"], reply: ["💬", "#8BBAF2"], react: [REACT[n.reaction] || "👍", "#F3A6C8"], request: ["!", "#F3C77A"], ep: [n.status === "OKE" ? "✓" : "✎", n.status === "OKE" ? "#8FE3B5" : "#FFB4BB"], update: ["↑", "#C9B6FF"] }[n.type] || ["•", "#8BBAF2"]);
+const notifIcon = (n) => ({ mention: ["@", "#8BBAF2"], comment: ["💬", "#A8E6CF"], reply: ["💬", "#8BBAF2"], react: [REACT[n.reaction] || "👍", "#F3A6C8"], request: ["!", "#F3C77A"], epnew: ["▣", "#C9B6FF"], ep: [n.status === "OKE" ? "✓" : "✎", n.status === "OKE" ? "#8FE3B5" : "#FFB4BB"], update: ["↑", "#C9B6FF"] }[n.type] || ["•", "#8BBAF2"]);
 
 // ---------- Data ----------
 async function loadAll() {
@@ -231,9 +233,9 @@ function notifView() {
   const older = shown.filter((n) => Date.now() - Date.parse(n.at) >= 86400000);
   const row = (n) => {
     const [ic, c] = notifIcon(n);
-    const av = n.type === "request" ? avatar("", "", (n.requester || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2)) : avatar(n.by);
+    const av = n.type === "epnew" ? avatar("", "", "EP") : n.type === "request" ? avatar("", "", (n.requester || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2)) : avatar(n.by);
     return `<button class="notif glass${n.read ? "" : " unread"}" data-n="${esc(n.id)}"><span class="ic">${av}<i style="background:${c}">${esc(ic)}</i></span>
-      <span class="t">${notifLine(n)}<small>${esc(ago(n.at))}${n.type === "request" ? " · perlu approval" : ""}</small></span>${n.read ? "" : '<span class="dot" aria-label="belum dibaca"></span>'}</button>`;
+      <span class="t">${notifLine(n)}<small>${esc(ago(n.at))}${n.type === "request" || n.type === "epnew" ? " · perlu approval" : ""}</small></span>${n.read ? "" : '<span class="dot" aria-label="belum dibaca"></span>'}</button>`;
   };
   return `<div class="top"><h1>Notifikasi</h1>${unread ? `<button class="back" data-act="readall">Tandai dibaca</button>` : ""}</div>
     <div class="chips" role="group" aria-label="Filter"><button class="chip" data-f="all" aria-pressed="${ui.filter === "all"}">Semua</button><button class="chip" data-f="unread" aria-pressed="${ui.filter === "unread"}">Belum dibaca${unread ? ` · ${unread}` : ""}</button></div>
@@ -261,7 +263,8 @@ async function openNotif(id) {
   if (!n.read) { n.read = true; ui.notif.unread = Math.max(0, ui.notif.unread - 1); api("/api/notif/read", { id }).catch(() => {}); if (navigator.setAppBadge) navigator.setAppBadge(ui.notif.unread).catch(() => {}); }
   ui.msg = ""; ui.okMsg = "";
   if (n.type === "request") { if (isLead()) { ui.tab = "approval"; ui.seg = "req"; ui.focus = n.reqId; ui.view = null; } render(); return; }
-  if (n.type === "ep") { ui.view = { type: "ep", epId: n.epId, n }; if (!ui.ep) loadEp(); render(); return; }
+  if (n.type === "epnew" && isLead()) { ui.tab = "approval"; ui.seg = "ep"; ui.focusEp = n.epId; ui.view = null; if (!ui.ep) loadEp(); render(); return; }
+  if (n.type === "ep" || n.type === "epnew") { ui.view = { type: "ep", epId: n.epId, n }; if (!ui.ep) loadEp(); render(); return; }
   if (n.type === "update") { ui.view = { type: "update", n }; render(); return; }
   if (n.postId) { ui.view = { type: "post", id: n.postId }; render(); loadPost(n.postId); }
 }
@@ -358,6 +361,7 @@ function bindApproval() {
   }));
   bindEpButtons();
   if (ui.focus) { const el = document.getElementById(`req-${ui.focus}`); if (el) el.scrollIntoView({ block: "center" }); ui.focus = null; }
+  if (ui.focusEp && ui.ep) { const el = document.getElementById(`ep-${ui.focusEp}`); if (el) el.scrollIntoView({ block: "start" }); ui.focusEp = null; }
 }
 function bindEpButtons() {
   loadThumbs();
@@ -412,7 +416,7 @@ function akunView() {
   } else if (!push || !push.subscribed) {
     pushBox = `<button class="big-btn" data-act="enablePush" ${ui.busy === "push" ? "disabled" : ""}>${ui.busy === "push" ? "Menyalakan…" : "Nyalakan notifikasi di HP ini"}</button>`;
   } else {
-    pushBox = PUSH_LABELS.filter(([k]) => k !== "request" || isLead()).map(([k, l, h]) => `<div class="glass row"><span>${esc(l)}${h ? `<small>${esc(h)}</small>` : ""}</span><button class="sw" role="switch" aria-checked="${!!push.prefs[k]}" aria-label="${esc(l)}" data-pref="${k}"></button></div>`).join("")
+    pushBox = PUSH_LABELS.filter(([k]) => !["request", "epnew"].includes(k) || isLead()).map(([k, l, h]) => `<div class="glass row"><span>${esc(l)}${h ? `<small>${esc(h)}</small>` : ""}</span><button class="sw" role="switch" aria-checked="${!!push.prefs[k]}" aria-label="${esc(l)}" data-pref="${k}"></button></div>`).join("")
       + `<button class="btn" data-act="testPush" style="width:100%">Kirim notifikasi uji</button><button class="btn" data-act="disablePush" style="width:100%">Matikan notifikasi di HP ini</button>`;
   }
   const install = !standalone() && !isIOS() ? `<div class="glass install"><b>Pasang ke layar utama</b><span>Di Chrome: ketuk menu ⋮ → <b>Tambahkan ke layar utama</b> (atau <b>Instal aplikasi</b>).</span></div>` : "";
