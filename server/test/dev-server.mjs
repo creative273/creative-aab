@@ -7,7 +7,7 @@ const SHEET = "PSUosgLcFh58JftjSZclS4FwgLe";
 const REPORT = "DkyyeC";
 const REQ = "0x35bD";
 // Grid tiruan: { sheetId: { "A1": value } }
-const grid = { [REPORT]: {}, [REQ]: {} };
+const grid = { [REPORT]: {}, [REQ]: {}, x1: {} };
 const images = [];
 const calls = [];
 const letters = (n) => { let s = ""; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
@@ -67,8 +67,13 @@ function igMock(u) {
   return err("unknown " + path);
 }
 
+// v1.7: tab KPI tiruan (A46:I67, contoh saja), cek rilis GitHub, dan debug_token Meta.
+write("x1!A46:F51", [["No", "Nama", "Posisi", "Target", "Realisasi", "Capaian"], [1, "Fitria Azzahra Kurnia", "Social Media Specialist", 60, 48, "80%"], [2, "Athallah Aqil Sukendar", "Graphic Designer", 40, 41, "102,5%"], [3, "Muhammad Albar", "Video Editor", 30, 18, "60%"], [null, null, null, null, null, null], [4, "Rifqi Firega", "AIGC Content Specialist", 100, 72, "72%"]]);
+const DEV_LATEST = process.env.DEV_LATEST || "1.7.1";
 globalThis.fetch = async (url, opts = {}) => {
   if (new URL(url).host === "graph.instagram.com") return igMock(new URL(url));
+  if (new URL(url).host === "github.com") return new Response(`version: ${DEV_LATEST}\npath: Creative-AAB-Setup-${DEV_LATEST}.exe\n`, { status: 200 });
+  if (new URL(url).host === "graph.facebook.com") return new Response(JSON.stringify({ data: { is_valid: true, expires_at: 0, data_access_expires_at: Math.floor(Date.now() / 1000) + 80 * 86400, scopes: ["instagram_basic", "instagram_manage_insights", "pages_read_engagement"] } }), { status: 200 });
   const g = await googleFetch(url, opts);
   if (g) return g;
   const u = new URL(url);
@@ -167,6 +172,19 @@ http.createServer(async (req, res) => {
       list.unshift({ id: "nep1", at: new Date().toISOString(), read: false, type: "epnew", by: "", epId: "s_modal", text: "MODAL JADI AFFILIATOR", upload: "Rabu, 25 November 2026" });
       kv.set("notif:ray", JSON.stringify(list));
     }
+  }
+  if (process.env.WITH_V17) {
+    const cron = (ms) => worker.scheduled({ scheduledTime: ms }, env, { waitUntil: (p) => p });
+    const d = new Date(); d.setUTCHours(3, 2, 0, 0); // 10.02 WIB, menit < 10
+    await cron(d.getTime()).catch((e) => console.log("cron:", e.message));
+    await go("/api/v17/lead-notes/save", { month: new Date().toISOString().slice(0, 7), member: "fitria", category: "performance", text: "Upload selalu sebelum deadline. Reels edukasi naik konsisten." }, token);
+    await go("/api/v17/lead-notes/save", { month: new Date().toISOString().slice(0, 7), member: "fitria", category: "arahan", text: "Coba format carousel tips mingguan." }, token);
+    await go("/api/v17/lead-notes/save", { month: new Date().toISOString().slice(0, 7), member: "albar", category: "development", text: "Perlu latihan color grading." }, token);
+    const pm = new Date(); pm.setDate(1); pm.setMonth(pm.getMonth() - 1);
+    kv.set("v17:snapshots", JSON.stringify([{ month: pm.toISOString().slice(0, 7), label: "bulan lalu", savedAt: new Date().toISOString(), counts: { content: 1, design: 4, video: 2, aigcProduksi: 20, aigcUpload: 15 }, requests: { total: 9, done: 7 }, ep: null, ig: {}, kpi: { sheetTitle: "KPI LALU", headers: ["No", "Nama", "Capaian"], rows: [{ row: 47, cells: ["1", "Fitria", "90%"] }] } }]));
+    const list = JSON.parse(kv.get("notif:ray") || "[]");
+    list.unshift({ id: "nsys1", at: new Date().toISOString(), read: false, type: "system", by: "", key: "token:NUSANTARA", text: "Token Instagram NUSANTARA tidak valid lagi. Sambungkan ulang token di Pengaturan." });
+    kv.set("notif:ray", JSON.stringify(list));
   }
   console.log("dev server :8787");
 });

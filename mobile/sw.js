@@ -34,6 +34,7 @@ function describe(n, names) {
   const who = names[n.by] || n.by || "";
   if (n.type === "request") return { title: `Request baru dari ${n.requester || "user"}`, body: `${n.text}${n.deadline ? ` · deadline ${n.deadline}` : ""}. Perlu approval.` };
   if (n.type === "epnew") return { title: `EP baru: ${n.text}`, body: `Perlu approval${n.upload ? `, upload ${n.upload}` : ""}.` };
+  if (n.type === "system") return { title: "Peringatan sistem Creative AAB", body: n.text || "" };
   if (n.type === "ep") return { title: n.status === "OKE" ? `EP di-OKE: ${n.text}` : `Revisi EP: ${n.text}`, body: n.status === "OKE" ? "Lanjut produksi." : n.note || "Ada catatan revisi." };
   const verb = (VERB[n.type] || (() => "berinteraksi denganmu"))(n);
   return { title: `${who} ${verb}`, body: n.text || "" };

@@ -75,6 +75,9 @@ globalThis.fetch = async (url, opts = {}) => {
     assert.match(claims.scope, /presentations/);
     return ok({ access_token: "g-token", expires_in: 3600 });
   }
+  if (u.host === "github.com" && u.pathname.endsWith("/latest.yml")) {
+    return new Response("version: 1.7.0\n", { status: 200 });
+  }
   assert.equal(opts.headers.Authorization, "Bearer g-token");
   if (u.host === "sheets.googleapis.com") {
     const id = u.pathname.split("/")[3];
@@ -312,6 +315,41 @@ await new Promise((res) => setTimeout(res, 50));
 assert.equal((await call("GET", "/api/notif", null, RAY)).data.items.filter((n) => n.type === "epnew").length, 1, "tidak dikirim ulang");
 // Keputusan EP tidak masuk timeline
 assert.ok(!(await call("GET", "/api/feed", null, RAY)).data.items.some((i) => /EP/.test(i.text) && i.kind === "auto" && /menyetujui|revisi/.test(i.text)), "approval EP tidak di timeline");
+
+// Setup bulan baru v1.7 (validasi & terapkan Content Calendar + EP + snapshot)
+assert.equal((await call("POST", "/api/v17/setup/validate", { calendarUrl: `https://docs.google.com/spreadsheets/d/${CAL_ID}/edit` }, ZAHRA)).status, 403, "hanya Ray");
+r = await call("POST", "/api/v17/setup/validate", {
+  calendarUrl: `https://docs.google.com/spreadsheets/d/${CAL_ID}/edit`,
+  epUrl: `https://docs.google.com/presentation/d/${EP_ID}/edit`,
+}, RAY);
+assert.equal(r.status, 200, JSON.stringify(r.data));
+assert.equal(r.data.ready, true);
+assert.equal(r.data.lark.status, "skip");
+assert.equal(r.data.calendar.status, "ok");
+assert.equal(r.data.ep.status, "ok");
+assert.equal(r.data.serviceAccount, SA.client_email);
+// Link EP salah -> error dan ready false
+r = await call("POST", "/api/v17/setup/validate", {
+  calendarUrl: `https://docs.google.com/spreadsheets/d/${CAL_ID}/edit`,
+  epUrl: "https://docs.google.com/presentation/d/1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/edit",
+}, RAY);
+assert.equal(r.status, 200);
+assert.equal(r.data.ready, false);
+assert.equal(r.data.calendar.status, "ok");
+assert.equal(r.data.ep.status, "error");
+// Terapkan Google + simpan snapshot bulan lalu
+r = await call("POST", "/api/v17/setup/apply", {
+  calendarUrl: `https://docs.google.com/spreadsheets/d/${CAL_ID}/edit`,
+  epUrl: `https://docs.google.com/presentation/d/${EP_ID}/edit`,
+  snapshot: true,
+  month: "2026-10",
+}, RAY);
+assert.equal(r.status, 200, JSON.stringify(r.data));
+assert.ok(r.data.steps.some((s) => s.step === "snapshot" && s.status === "ok"));
+assert.ok(r.data.steps.some((s) => s.step === "google" && s.status === "ok"));
+const snaps = (await call("GET", "/api/v17/snapshots", null, RAY)).data.items;
+assert.equal(snaps[0].month, "2026-10");
+assert.equal(snaps[0].ep.total, 5);
 
 // GOOGLE_SA kosong: pesan jelas
 const env2 = { ...env, GOOGLE_SA: "" };

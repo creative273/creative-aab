@@ -277,7 +277,7 @@ function setupUpdater() {
   autoUpdater.on("download-progress", (p) => { upd.progress = Math.round(p.percent || 0); sendUpdate(); });
   autoUpdater.on("update-downloaded", (i) => {
     upd.state = "ready"; upd.version = i.version; sendUpdate();
-    showPopup({ id: "", title: `Versi ${i.version} siap dipasang`, body: "Buka Pengaturan, klik Pasang dan restart. Atau biarkan, terpasang otomatis saat aplikasi ditutup." });
+    showPopup({ id: `update:${i.version}`, openLabel: "Update Sekarang", title: `Versi ${i.version} siap dipasang`, body: "Klik Update Sekarang untuk pasang dan buka ulang aplikasi. Atau biarkan, terpasang otomatis saat aplikasi ditutup." });
   });
   autoUpdater.on("error", (e) => { upd.state = "error"; upd.error = String((e && e.message) || e).split("\n")[0].slice(0, 200); sendUpdate(); });
   const check = () => autoUpdater.checkForUpdates().catch(() => {});
@@ -324,6 +324,12 @@ ipcMain.handle("capture-login", (_e, site) => {
 ipcMain.handle("popup:show", (_e, data) => showPopup(data));
 ipcMain.handle("popup:open", (_e, id) => {
   if (popup && !popup.isDestroyed()) popup.close();
+  // v1.7: tombol "Update Sekarang" di pop-up. Kalau file update sudah terunduh, langsung pasang.
+  if (typeof id === "string" && id.startsWith("update:") && upd.state === "ready") {
+    quitting = true;
+    setImmediate(() => autoUpdater.quitAndInstall(true, true));
+    return;
+  }
   showMain(id);
 });
 ipcMain.handle("popup:close", () => popup && !popup.isDestroyed() && popup.close());

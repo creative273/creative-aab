@@ -13,8 +13,9 @@ const PUSH_LABELS = [
   ["epnew", "EP baru", "Khusus Ray, slide EP baru yang perlu approval"],
   ["ep", "Keputusan EP", "OKE atau revisi dari Ray"],
   ["react", "Reaksi", "Saat postinganmu diberi reaksi"],
-  ["update", "Minta update aplikasi laptop", ""],
+  ["system", "Peringatan sistem", "Khusus Ray, token atau layanan bermasalah"],
 ];
+const LEAD_ONLY_PUSH = ["request", "epnew", "system"];
 const POLL_MS = 60 * 1000;
 
 const ui = {
@@ -113,10 +114,11 @@ function notifLine(n) {
     case "epnew": return `EP baru perlu approval: “${esc(n.text)}”${n.upload ? ` · upload ${esc(n.upload)}` : ""}`;
     case "ep": return n.status === "OKE" ? `${who} meng-OKE EP “${esc(n.text)}”` : `${who} minta revisi EP “${esc(n.text)}”${n.note ? `: ${esc(n.note)}` : ""}`;
     case "update": return `${who} minta kamu update aplikasi laptop ke v${esc(n.version)}`;
+    case "system": return `Peringatan sistem: ${esc(n.text)}`;
     default: return `${who} berinteraksi denganmu`;
   }
 }
-const notifIcon = (n) => ({ mention: ["@", "#8BBAF2"], comment: ["💬", "#A8E6CF"], reply: ["💬", "#8BBAF2"], react: [REACT[n.reaction] || "👍", "#F3A6C8"], request: ["!", "#F3C77A"], epnew: ["▣", "#C9B6FF"], ep: [n.status === "OKE" ? "✓" : "✎", n.status === "OKE" ? "#8FE3B5" : "#FFB4BB"], update: ["↑", "#C9B6FF"] }[n.type] || ["•", "#8BBAF2"]);
+const notifIcon = (n) => ({ mention: ["@", "#8BBAF2"], comment: ["💬", "#A8E6CF"], reply: ["💬", "#8BBAF2"], react: [REACT[n.reaction] || "👍", "#F3A6C8"], request: ["!", "#F3C77A"], epnew: ["▣", "#C9B6FF"], ep: [n.status === "OKE" ? "✓" : "✎", n.status === "OKE" ? "#8FE3B5" : "#FFB4BB"], update: ["↑", "#C9B6FF"], system: ["⚠", "#F3C77A"] }[n.type] || ["•", "#8BBAF2"]);
 
 // ---------- Data ----------
 async function loadAll() {
@@ -233,7 +235,7 @@ function notifView() {
   const older = shown.filter((n) => Date.now() - Date.parse(n.at) >= 86400000);
   const row = (n) => {
     const [ic, c] = notifIcon(n);
-    const av = n.type === "epnew" ? avatar("", "", "EP") : n.type === "request" ? avatar("", "", (n.requester || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2)) : avatar(n.by);
+    const av = n.type === "system" ? avatar("", "", "!") : n.type === "epnew" ? avatar("", "", "EP") : n.type === "request" ? avatar("", "", (n.requester || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2)) : avatar(n.by);
     return `<button class="notif glass${n.read ? "" : " unread"}" data-n="${esc(n.id)}"><span class="ic">${av}<i style="background:${c}">${esc(ic)}</i></span>
       <span class="t">${notifLine(n)}<small>${esc(ago(n.at))}${n.type === "request" || n.type === "epnew" ? " · perlu approval" : ""}</small></span>${n.read ? "" : '<span class="dot" aria-label="belum dibaca"></span>'}</button>`;
   };
@@ -416,7 +418,7 @@ function akunView() {
   } else if (!push || !push.subscribed) {
     pushBox = `<button class="big-btn" data-act="enablePush" ${ui.busy === "push" ? "disabled" : ""}>${ui.busy === "push" ? "Menyalakan…" : "Nyalakan notifikasi di HP ini"}</button>`;
   } else {
-    pushBox = PUSH_LABELS.filter(([k]) => !["request", "epnew"].includes(k) || isLead()).map(([k, l, h]) => `<div class="glass row"><span>${esc(l)}${h ? `<small>${esc(h)}</small>` : ""}</span><button class="sw" role="switch" aria-checked="${!!push.prefs[k]}" aria-label="${esc(l)}" data-pref="${k}"></button></div>`).join("")
+    pushBox = PUSH_LABELS.filter(([k]) => !LEAD_ONLY_PUSH.includes(k) || isLead()).map(([k, l, h]) => `<div class="glass row"><span>${esc(l)}${h ? `<small>${esc(h)}</small>` : ""}</span><button class="sw" role="switch" aria-checked="${!!push.prefs[k]}" aria-label="${esc(l)}" data-pref="${k}"></button></div>`).join("")
       + `<button class="btn" data-act="testPush" style="width:100%">Kirim notifikasi uji</button><button class="btn" data-act="disablePush" style="width:100%">Matikan notifikasi di HP ini</button>`;
   }
   const install = !standalone() && !isIOS() ? `<div class="glass install"><b>Pasang ke layar utama</b><span>Di Chrome: ketuk menu ⋮ → <b>Tambahkan ke layar utama</b> (atau <b>Instal aplikasi</b>).</span></div>` : "";
@@ -523,4 +525,5 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === "visible" && ui.token) { loadNotif(); if (isLead() && ui.tab === "approval") loadState(); } }, POLL_MS);
 
 render();
+window.__aabReady = true;
 if (ui.token) { idbPut("token", ui.token); loadAll().then(() => { loadPush(); openFromHash(); }); }
