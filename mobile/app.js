@@ -523,4 +523,5 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === "visible" && ui.token) { loadNotif(); if (isLead() && ui.tab === "approval") loadState(); } }, POLL_MS);
 
 render();
+window.__aabReady = true;
 if (ui.token) { idbPut("token", ui.token); loadAll().then(() => { loadPush(); openFromHash(); }); }

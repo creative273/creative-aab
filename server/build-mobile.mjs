@@ -16,6 +16,10 @@ for (const name of fs.readdirSync(dir).sort()) {
   const buf = fs.readFileSync(path.join(dir, name));
   files[name] = ext === ".png" ? { type: TYPES[ext], b64: true, data: buf.toString("base64") } : { type: TYPES[ext], data: buf.toString("utf8") };
 }
+// Penanda versi untuk app.js dan style.css supaya HP tidak memakai salinan lama.
+const crypto = await import("node:crypto");
+const ver = crypto.createHash("sha1").update(files["app.js"].data + files["style.css"].data).digest("hex").slice(0, 8);
+files["index.html"].data = files["index.html"].data.replaceAll("__V__", ver);
 const src = fs.readFileSync(workerPath, "utf8");
 const start = src.indexOf("// MOBILE-START"), end = src.indexOf("// MOBILE-END");
 if (start < 0 || end < 0) throw new Error("Penanda MOBILE-START/MOBILE-END tidak ada di worker.js");

@@ -10,13 +10,26 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="stylesheet" href="style.css">
+<style>html,body{background:#08111D;color:#EEF3FA;margin:0}.boot{font:15px -apple-system,system-ui,sans-serif;padding:80px 24px;text-align:center;color:#9DB0C8}.boot-err{font:13px ui-monospace,monospace;color:#FFB4BB;background:#3E1A20;margin:12px;padding:10px;border-radius:10px;white-space:pre-wrap;word-break:break-word}</style>
+<link rel="stylesheet" href="style.css?v=__V__">
 <title>Creative AAB</title>
 </head>
 <body>
-<main id="app" aria-live="polite"></main>
+<main id="app" aria-live="polite"><p class="boot">Memuat Creative AAB…</p></main>
 <nav class="tabbar" id="tabbar" hidden></nav>
 <div id="sheet-root"></div>
-<script src="app.js"></script>
+<script>
+// Kalau ada error saat memuat, tampilkan di layar supaya bisa difoto dan diperbaiki.
+(function () {
+  function show(msg) {
+    var d = document.createElement("div"); d.className = "boot-err"; d.textContent = "Error: " + msg + "\n" + navigator.userAgent;
+    document.body.appendChild(d);
+  }
+  window.addEventListener("error", function (e) { show((e.message || "gagal memuat " + ((e.target && (e.target.src || e.target.href)) || "")) + (e.filename ? " @ " + e.filename.split("/").pop() + ":" + e.lineno : "")); }, true);
+  window.addEventListener("unhandledrejection", function (e) { show("promise: " + (e.reason && e.reason.message || e.reason)); });
+  setTimeout(function () { if (!window.__aabReady) show("Aplikasi tidak selesai dimuat dalam 8 detik."); }, 8000);
+})();
+</script>
+<script src="app.js?v=__V__"></script>
 </body>
 </html>
