@@ -88,6 +88,7 @@ async function logout(msg) {
   ui.settings = await window.aab.saveSettings({ token: "", user: null });
   ui.data = null; ui.dash = null; ui.ep = null; ui.cal = null; ui.gcfg = null; ui.gErr = ""; ui.tab = "request"; ui.view = "list"; ui.filter = null;
   ui.notif = null; ui.feeds = {}; ui.bellOpen = false; renderBellPanel(); closeMention();
+  ui.kpi = null; ui.kpiErr = ""; ui.health = null; ui.healthErr = ""; ui.notes = null; ui.notesErr = ""; ui.snaps = null; ui.kpiPrev = false;
   ui.form = msg ? { msg, msgType: "info" } : {};
   render();
 }
@@ -108,6 +109,8 @@ async function loadState({ refresh = false } = {}) {
     await checkNewRequests(data.requests || []);
     if (!ui.notif) loadNotif();
     else if ((data.notifUnread || 0) !== ui.notif.unread) loadNotif({ announce: true });
+    autoUpdateCheck().catch(() => {});
+    if (isLead() && isFull() && !ui.health && !ui.healthLoading) { ui.healthLoading = true; loadHealth().finally(() => { ui.healthLoading = false; }); }
     // Timeline terbuka dan ada kabar baru: muat ulang diam-diam.
     const fa = (ui.feeds || {}).all;
     if (currentPage() === "feed" && fa && !fa.loading && data.feedLatest && (!fa.items[0] || data.feedLatest > fa.items[0].at)) loadFeed();
@@ -144,8 +147,10 @@ async function checkNewRequests(requests, { silent = false } = {}) {
 // ---------- Render ----------
 function render() {
   applyTheme();
-  if (!isFull() && ["home", "ig", "feed", "team", "profile", "post"].includes(ui.tab)) ui.tab = "request";
+  if (!isFull() && ["home", "ig", "feed", "team", "profile", "post", "kpi", "health", "setup", "notes"].includes(ui.tab)) ui.tab = "request";
+  if (!isLead() && ["health", "setup", "notes"].includes(ui.tab)) ui.tab = isFull() ? "home" : "request";
   renderBar();
+  renderUpdBanner();
   renderSide();
   renderPageHead();
   const view = $("view");
@@ -162,6 +167,18 @@ function render() {
   } else if (ui.tab === "home") {
     view.innerHTML = homeView();
     bindHome();
+  } else if (ui.tab === "kpi" && isFull()) {
+    view.innerHTML = kpiView();
+    bindKpi();
+  } else if (ui.tab === "health" && isFull() && isLead()) {
+    view.innerHTML = healthView();
+    bindHealth();
+  } else if (ui.tab === "setup" && isFull() && isLead()) {
+    view.innerHTML = setupView();
+    bindSetup();
+  } else if (ui.tab === "notes" && isFull() && isLead()) {
+    view.innerHTML = notesView();
+    bindNotes();
   } else if (ui.tab === "feed" && isFull()) {
     view.innerHTML = (ui.feedErr ? `<p class="msg err">${esc(ui.feedErr)}</p>` : "") + feedView();
     bindFeed();
@@ -1370,7 +1387,7 @@ function applyTheme() {
 
 async function setMode(mode) {
   ui.settings = await window.aab.setMode(mode);
-  if (mode === "compact" && ["home", "ig", "feed", "team", "profile", "post"].includes(ui.tab)) ui.tab = "request";
+  if (mode === "compact" && ["home", "ig", "feed", "team", "profile", "post", "kpi", "health", "setup", "notes"].includes(ui.tab)) ui.tab = "request";
   if (mode === "full" && configured() && ui.tab === "request" && ui.view === "list") ui.tab = "home";
   if (ui.view === "detail" && ui.tab !== "ep") ui.view = "list";
   render();
@@ -1433,6 +1450,10 @@ const ICONS = {
   feed: '<path d="M4 4h12v9H8l-4 3z"/><path d="M7 8h6M7 10.5h4"/>',
   team: '<circle cx="10" cy="7" r="3"/><path d="M4 17c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/>',
   profile: '<circle cx="10" cy="7" r="3"/><path d="M4 17c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5"/>',
+  kpi: '<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M3 8h14M3 12.5h14M8 8v9"/>',
+  health: '<path d="M2.5 10h3.5l2-4.5 3.5 9 2-4.5h4"/>',
+  setup: '<rect x="3" y="4" width="14" height="13" rx="2"/><path d="M3 8h14M7 2v4M13 2v4M10 10.5v4M8 12.5h4"/>',
+  notes: '<path d="M5 3h7l3 3v11H5z"/><path d="M8 9h4M8 12h4"/>',
   settings: '<circle cx="10" cy="10" r="2.6"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6"/>',
 };
 function currentPage() {
@@ -1449,11 +1470,18 @@ function navItems() {
     { id: "home", label: "Ringkasan", c: "#7FB2EE" },
     { id: "feed", label: "Timeline", c: "#9FD4FF", badge: feedHasNew() ? "Baru" : 0 },
     { id: "request", label: "Request creative", c: "#F3C77A", badge: reqOpen },
-    { id: "input", label: isLead() ? "KPI tim" : "Input KPI", c: "#8FE3B5" },
+    { id: "input", label: isLead() ? "Dashboard tim" : "Input KPI", c: "#8FE3B5" },
+    { id: "kpi", label: "KPI tim saat ini", c: "#A8E6CF" },
     { group: "KONTEN" },
     { id: "ep", label: "Editorial plan", c: "#FFB4BB", badge: epBadge },
     ...(canCal() ? [{ id: "cal", label: "Kalender konten", c: "#C9B6FF" }] : []),
     { id: "ig", label: "Insight Instagram", c: "#F3A6C8" },
+    ...(isLead() ? [
+      { group: "KHUSUS RAY" },
+      { id: "health", label: "Kesehatan & kuota", c: "#8FE3B5", badge: healthProblems() ? "!" : 0 },
+      { id: "setup", label: "Setup bulan baru", c: "#F3C77A" },
+      { id: "notes", label: "Catatan lead", c: "#C9B6FF" },
+    ] : []),
     { group: "TIM" },
     { id: "team", label: "Profil tim", c: "#FFD8A8" },
     ...(isLead() ? [{ id: "accounts", label: "Akun tim", c: "#D6E0EC" }] : []),
@@ -1497,6 +1525,9 @@ function goPage(id, extra = {}) {
   render();
   if (isLead() && (id === "home" || id === "input")) loadState();
   if (id === "ig") loadIg();
+  if (id === "kpi") loadKpi();
+  if (id === "health") loadHealth();
+  if (id === "notes") loadNotes();
 }
 
 // ---------- Judul halaman (jendela penuh) ----------
@@ -1517,7 +1548,7 @@ function renderPageHead() {
   const heads = {
     home: [`${greeting()}, ${first}`, today],
     request: ["Request creative", isLead() ? "Semua request dari sheet REQUEST CREATIVE" : "Request yang sudah di-approve Ray"],
-    input: [isLead() ? "KPI tim" : "Input KPI", isLead() ? "Angka bulan ini dan aktivitas terbaru" : `Blok ${(member() || {}).block || ""} di Creative Report Analytic`],
+    input: [isLead() ? "Dashboard tim" : "Input KPI", isLead() ? "Angka bulan ini dan aktivitas terbaru" : `Blok ${(member() || {}).block || ""} di Creative Report Analytic`],
     ep: ["Editorial plan", ui.ep && ui.ep.title ? `${ui.ep.title} · ${ui.ep.items.length} konten` : "Google Slides EP bulan ini"],
     cal: ["Kalender konten", ui.cal && ui.cal.title ? ui.cal.title : "Content Calendar bulan ini"],
     accounts: ["Akun tim", "Buat akun, reset password, atau nonaktifkan akun"],
@@ -1527,6 +1558,10 @@ function renderPageHead() {
     profile: ["Profil", "Foto, bio, dan aktivitas"],
     post: ["Postingan", "Dari Timeline tim creative"],
     settings: ["Pengaturan", "Tampilan berlaku di laptop ini. Foto profil terlihat oleh seluruh tim."],
+    kpi: ["KPI tim saat ini", "Dibaca langsung dari sheet Lark, hanya baca"],
+    health: ["Kesehatan & kuota", "Khusus Ray. Status layanan, kuota gratis, dan token Instagram"],
+    setup: ["Setup bulan baru", "Khusus Ray. Tempel link file bulan baru, tes, lalu terapkan"],
+    notes: ["Catatan lead", "Khusus Ray. Tidak terlihat tim dan tidak masuk Timeline"],
   };
   const [h, p] = heads[currentPage()] || heads.home;
   el.innerHTML = `<div><h1>${esc(h)}</h1><p>${esc(p)}</p></div>`;
@@ -1561,6 +1596,7 @@ function kpiCard(id) {
     <div class="kpi-top">${memberAvatar(id, "sm")}<b>${esc(m.short)}</b> · ${label}</div>
     <div class="kpi-num">${num ?? 0}${id === "rifqi" ? `<small>produksi · ${c.aigcUpload ?? 0} upload</small>` : ""}<span class="delta${week ? "" : " zero"}">+${week} 7 hari</span></div>
     <svg class="spark" viewBox="0 0 200 34" preserveAspectRatio="none" aria-hidden="true"><path d="${sparkPath(lastDays(14).map((d) => ser[d] || 0))}" fill="none" stroke="${s.color}" stroke-width="2"/></svg>
+    ${momBadge(id, num)}
     <div class="kpi-foot">${isLead() ? `Input terakhir lewat widget: ${esc(ago(last))}` : `Total bulan ini, blok ${esc(m.block)}`}</div>
   </div>`;
 }
@@ -1685,6 +1721,7 @@ function homeView() {
 
 function bindHome() {
   bindCommon();
+  if (isLead() && !ui.snaps) loadSnaps();
   const todo = todoItems();
   document.querySelectorAll("[data-todo]").forEach((b) => b.addEventListener("click", () => { const t = todo[+b.dataset.todo]; goPage(t.go[0], t.go[1]); }));
   document.querySelectorAll("[data-goep]").forEach((b) => b.addEventListener("click", () => goPage("ep", { epFilter: b.dataset.goep })));
@@ -2301,6 +2338,7 @@ const notifVerb = (n) => {
   if (n.type === "epnew") return `EP baru perlu approval: “${n.text}”`;
   if (n.type === "ep") return n.status === "OKE" ? `meng-OKE EP “${n.text}”` : `minta revisi EP “${n.text}”`;
   if (n.type === "react") return `memberi ${(REACTS.find((r) => r[0] === n.reaction) || [, "👍"])[1]} pada postinganmu`;
+  if (n.type === "system") return "Peringatan sistem";
   return "berinteraksi denganmu";
 };
 
@@ -2334,7 +2372,7 @@ async function loadNotif({ announce = false } = {}) {
         return;
       }
       window.aab.showPopup(pop.length === 1
-        ? { id: `post:${n.postId}:${n.id}`, title: n.by ? `${profileOf(n.by).short} ${notifVerb(n)}` : notifVerb(n), body: n.type === "epnew" ? "Buka untuk OKE atau revisi." : plainMentions(n.text || "") }
+        ? { id: `post:${n.postId || ""}:${n.id}`, title: n.by ? `${profileOf(n.by).short} ${notifVerb(n)}` : notifVerb(n), body: n.type === "epnew" ? "Buka untuk OKE atau revisi." : plainMentions(n.text || "") }
         : { id: `post:${n.postId}:${n.id}`, title: `${pop.length} notifikasi baru`, body: pop.map((x) => `${profileOf(x.by).short} ${notifVerb(x)}`).join("\n") });
     }
     renderBell();
@@ -2360,7 +2398,7 @@ function renderBellPanel() {
   const items = (ui.notif && ui.notif.items) || [];
   p.innerHTML = `<div class="bell-head"><b>Notifikasi</b>${items.some((n) => !n.read) ? `<button class="linklike" data-bell="readall">Tandai semua dibaca</button>` : ""}</div>
     ${!ui.notif ? `<p class="empty">Memuat…</p>` : items.length ? `<ul class="bell-list">${items.map((n) => `<li><button class="bell-item${n.read ? "" : " unread"}" data-notif="${esc(n.id)}" data-post="${esc(n.postId || "")}">
-      ${avatar(n.by || "", "", n.type === "epnew" ? "EP" : n.requester || "")}<span class="bell-body"><span class="bell-text">${n.type === "request" || n.type === "epnew" ? "" : `<b>${esc(profileOf(n.by).name)}</b> `}${esc(notifVerb(n))}${n.text && !["update", "ep"].includes(n.type) ? `: “${esc(plainMentions(n.text))}”` : ""}${n.type === "ep" && n.note ? `: ${esc(n.note)}` : ""}</span><small>${esc(ago(n.at))}</small></span></button></li>`).join("")}</ul>`
+      ${avatar(n.by || "", "", n.type === "epnew" ? "EP" : n.type === "system" ? "!" : n.requester || "")}<span class="bell-body"><span class="bell-text">${n.type === "request" || n.type === "epnew" || n.type === "system" ? "" : `<b>${esc(profileOf(n.by).name)}</b> `}${esc(notifVerb(n))}${n.text && !["update", "ep"].includes(n.type) ? `: “${esc(plainMentions(n.text))}”` : ""}${n.type === "ep" && n.note ? `: ${esc(n.note)}` : ""}</span><small>${esc(ago(n.at))}</small></span></button></li>`).join("")}</ul>`
       : `<p class="empty">Belum ada notifikasi. Kalau ada yang menandai, mengomentari, atau memberi reaksi, muncul di sini.</p>`}`;
   const r = $("btnBell").getBoundingClientRect();
   p.style.top = `${Math.round(r.bottom + 8)}px`;
@@ -2382,6 +2420,7 @@ async function openNotif(id, postId) {
   if (n && (n.type === "ep" || n.type === "epnew") && n.epId) { if (isFull()) goPage("ep"); else { ui.tab = "ep"; } ui.epOpen = n.epId; ui.view = "detail"; ui.form = {}; render(); return; }
   if (n && n.type === "request") { if (isFull()) goPage("request"); else ui.tab = "request"; const rq = ((ui.data && ui.data.requests) || []).find((x) => x.id === n.reqId); ui.openId = rq ? rq.id : null; ui.view = rq ? "detail" : "list"; ui.form = {}; render(); return; }
   if (n && n.type === "update") { if (isFull()) goPage("settings"); else { ui.view = "settings"; ui.form = {}; render(); } return; }
+  if (n && n.type === "system") { if (!isLead()) return; if (!isFull()) await setMode("full"); ui.health = null; goPage("health"); return; }
   if (postId) openPost(postId);
 }
 
@@ -2510,6 +2549,8 @@ function updateBox() {
   else if (u.state === "downloading") { line = `Mengunduh versi ${esc(u.version)}… ${u.progress || 0}%`; btn = ""; }
   else if (u.state === "ready") { line = `Versi ${esc(u.version)} sudah diunduh.`; btn = `<button class="btn" data-act="installUpdate">Pasang dan restart</button>`; }
   else if (u.state === "error") line = `Cek pembaruan gagal: ${esc(u.error || "tidak diketahui")}`;
+  const nv = newerVersion();
+  if (nv && u.state !== "ready" && u.state !== "downloading") line = `${line} Versi ${esc(nv)} sudah rilis.`.trim();
   return `<div class="section">
     <h2>Aplikasi</h2>
     <p class="hint">${cur}. ${line}</p>
@@ -2520,10 +2561,11 @@ function updateBox() {
 
 const verNum = (v) => String(v || "0.0.0").split(".").map(Number).reduce((a, n) => a * 1000 + (n || 0), 0);
 
-// Ray: lihat versi aplikasi tiap orang, kirim pop-up minta update.
+// Ray: lihat versi aplikasi tiap orang. Sejak v1.7 pop-up update dikirim otomatis, tanpa tombol manual.
 function teamUpdateBox() {
-  const cur = (ui.update && ui.update.current) || "";
-  const f = ui.form;
+  const mine = (ui.update && ui.update.current) || "";
+  const latest = latestVer();
+  const cur = latest && verNum(latest) > verNum(mine) ? latest : mine;
   const vs = ui.appVersions;
   if (!vs && !ui.appVersionsLoading) {
     ui.appVersionsLoading = true;
@@ -2533,9 +2575,7 @@ function teamUpdateBox() {
   return `<h3 class="sub-h">Versi aplikasi tim</h3>
     ${!vs ? `<p class="hint">Memuat…</p>` : `<ul class="ver-list">${vs.map((v) => `<li>${avatar(v.username, "sm")}<span>${esc(v.name)}</span>
       ${!v.version ? `<span class="pill wait">belum tercatat</span>` : verNum(v.version) >= verNum(cur) ? `<span class="pill done">v${esc(v.version)}</span>` : `<span class="pill late">v${esc(v.version)}, belum update</span>`}</li>`).join("")}</ul>
-      <p class="hint">Versi tercatat saat aplikasi orang itu terhubung ke server. Yang belum tercatat berarti masih memakai versi sebelum 1.5.2 atau belum membuka aplikasi.</p>`}
-    ${cur ? `<button class="btn secondary" data-act="askUpdate" ${f.asking || !vs ? "disabled" : ""}>${f.asking ? "Mengirim…" : `Kirim pop-up: minta semua update ke v${esc(cur)}`}</button>` : ""}
-    ${f.askMsg ? `<p class="msg ${f.askMsgType}" role="status">${esc(f.askMsg)}</p>` : ""}
+      <p class="hint">Versi tercatat saat aplikasi orang itu terhubung ke server. Yang belum tercatat berarti masih memakai versi sebelum 1.5.2 atau belum membuka aplikasi. Begitu versi baru rilis, laptop tim otomatis mendapat pop-up "Update Sekarang".</p>`}
     ${vs && !behind.length && vs.every((v) => v.version) ? `<p class="hint">Semua sudah memakai versi terbaru.</p>` : ""}`;
 }
 
@@ -2566,6 +2606,7 @@ function settingsWork(f, lead) {
     ${lead ? `<div class="section">
       <h2>Link sheet bulan ini</h2>
       <p class="hint">Tiap awal bulan, setelah file baru diduplikat dan app ditambahkan ke file, tempel link file baru di sini.</p>
+      ${isFull() ? `<p class="hint">Atau pakai <button class="linklike" data-act="openSetup">Setup bulan baru</button> untuk tempel 3 link sekaligus, tes koneksi, dan simpan snapshot bulan lalu.</p>` : ""}
       <label for="sSheet">Link sheet Lark</label><input type="url" id="sSheet" value="${esc(f.sSheet || "")}" placeholder="https://....larksuite.com/sheets/...">
       <button class="btn" data-act="saveSheet" ${f.busySheet ? "disabled" : ""}>${f.busySheet ? "Mengecek file…" : "Pakai file ini"}</button>
     </div>
@@ -2604,16 +2645,7 @@ function googleSettings() {
 
 function bindSettings() {
   bindCommon();
-  on("askUpdate", async () => {
-    const cur = ui.update && ui.update.current;
-    ui.form.asking = true; render();
-    try {
-      const r = await api("/api/app/update-request", { version: cur });
-      ui.appVersions = r.versions;
-      Object.assign(ui.form, { asking: false, askMsg: r.sent.length ? `Pop-up dikirim ke ${r.sent.length} orang. Muncul di laptop mereka dalam 1 menit.` : "Semua yang tercatat sudah di versi ini. Tidak ada yang dikirimi.", askMsgType: "ok" });
-    } catch (e) { Object.assign(ui.form, { asking: false, askMsg: e.message, askMsgType: "err" }); }
-    render();
-  });
+  on("openSetup", () => goPage("setup"));
   bindLook();
   bindIgSettings();
   keep(["sSheet", "pOld", "pNew", "gCal", "gEp"]);
@@ -2849,6 +2881,453 @@ function bindCommon() {
   on("back", () => { ui.view = "list"; ui.form = {}; render(); });
 }
 
+// ===================== v1.7 =====================
+const curMonth = () => todayISO().slice(0, 7);
+const monthName = (m, short = false) => { const [y, mm] = String(m || "").split("-").map(Number); if (!y || !mm) return String(m || ""); return `${(short ? BLN : BULAN_PANJANG)[mm - 1]} ${y}`; };
+const fmtDateTime = (iso) => { if (!iso) return "-"; const d = new Date(iso); if (isNaN(d)) return "-"; return `${d.getDate()} ${BLN[d.getMonth()]} ${pad(d.getHours())}.${pad(d.getMinutes())}`; };
+const fmtDay = (ms) => { const d = new Date(ms); return `${d.getDate()} ${BULAN_PANJANG[d.getMonth()]} ${d.getFullYear()}`; };
+
+// ----- Update otomatis: versi terbaru dititipkan server di /api/state (latestApp) -----
+const latestVer = () => (ui.data && ui.data.latestApp && ui.data.latestApp.version) || "";
+function newerVersion() {
+  const u = ui.update || {};
+  const cur = u.current || "";
+  if (!cur) return "";
+  if ((u.state === "ready" || u.state === "downloading") && u.version && verNum(u.version) > verNum(cur)) return u.version;
+  const l = latestVer();
+  return l && verNum(l) > verNum(cur) ? l : "";
+}
+
+async function autoUpdateCheck() {
+  const v = newerVersion();
+  if (!v || !configured()) return;
+  const u = ui.update || {};
+  // Minta electron-updater mengunduh sekarang, tidak menunggu jadwal cek 6 jam. Sekali per versi.
+  if (u.state !== "dev" && ui.updCheckedFor !== v && u.state !== "downloading" && u.state !== "ready") {
+    ui.updCheckedFor = v;
+    window.aab.checkUpdate().then((x) => { ui.update = x; renderUpdBanner(); renderBar(); }).catch(() => {});
+  }
+  // Pop-up Windows sekali per versi.
+  if (ui.settings.notifiedVersion !== v) {
+    ui.settings = await window.aab.saveSettings({ notifiedVersion: v });
+    window.aab.showPopup({ id: `update:${v}`, openLabel: "Update Sekarang", title: `Creative AAB versi ${v} sudah rilis`, body: "Klik Update Sekarang. Pembaruan diunduh lalu terpasang otomatis dan aplikasi terbuka lagi." });
+  }
+}
+
+async function updateNow() {
+  let u = ui.update || {};
+  if (u.state === "ready") { window.aab.installUpdate(); return; }
+  if (u.state === "dev") { const url = ui.data && ui.data.latestApp && ui.data.latestApp.url; if (url) window.aab.openExternal(url); return; }
+  ui.installWhenReady = true;
+  renderUpdBanner();
+  if (u.state !== "downloading") {
+    try { ui.update = await window.aab.checkUpdate(); } catch { /* status error tampil di banner */ }
+    u = ui.update || {};
+    if (u.state === "ready") { window.aab.installUpdate(); return; }
+  }
+  renderUpdBanner(); renderBar();
+}
+
+function renderUpdBanner() {
+  const el = $("updBanner");
+  if (!el) return;
+  const v = newerVersion();
+  const show = configured() && !!v && ui.updHidden !== v;
+  el.hidden = !show;
+  if (!show) { el.innerHTML = ""; return; }
+  const u = ui.update || {};
+  let text = `Versi ${esc(v)} sudah rilis.`;
+  let btn = `<button class="btn inline" data-upd="now">Update Sekarang</button>`;
+  if (u.state === "ready") text = `Versi ${esc(v)} siap dipasang.`;
+  else if (u.state === "downloading") {
+    text = `Mengunduh versi ${esc(v)}… ${u.progress || 0}%.${ui.installWhenReady ? " Terpasang otomatis begitu selesai." : ""}`;
+    if (ui.installWhenReady) btn = "";
+  } else if (u.state === "checking") { text = `Menyiapkan versi ${esc(v)}…`; btn = ""; }
+  else if (u.state === "error") { text = `Versi ${esc(v)} sudah rilis, tapi unduhan gagal: ${esc(u.error || "tidak diketahui")}.`; btn = `<button class="btn inline" data-upd="now">Coba lagi</button>`; }
+  else if (u.state === "dev") { text = `Versi ${esc(v)} sudah rilis. Update otomatis hanya jalan di aplikasi hasil installer.`; btn = `<button class="btn inline secondary" data-upd="now">Buka halaman rilis</button>`; }
+  el.innerHTML = `<span class="upd-ic" aria-hidden="true">↑</span><span class="upd-text">${text}</span>${btn}<button class="icon-btn sm" data-upd="hide" aria-label="Sembunyikan sampai aplikasi dibuka lagi" title="Nanti">✕</button>`;
+  el.querySelector('[data-upd="now"]')?.addEventListener("click", () => updateNow());
+  el.querySelector('[data-upd="hide"]')?.addEventListener("click", () => { ui.updHidden = v; renderUpdBanner(); });
+}
+
+// ----- Snapshot bulan lalu (pembanding MoM, khusus Ray) -----
+async function loadSnaps() {
+  if (!isLead() || ui.snapsLoading) return;
+  ui.snapsLoading = true;
+  try { ui.snaps = (await api("/api/v17/snapshots")).items || []; } catch { ui.snaps = []; }
+  ui.snapsLoading = false;
+  if (["home", "kpi"].includes(currentPage())) render();
+}
+// Snapshot terbaru dari bulan sebelum bulan ini.
+const prevSnap = () => (ui.snaps || []).find((s) => s.month < curMonth()) || null;
+const SNAP_KEY = { fitria: "content", athallah: "design", albar: "video", rifqi: "aigcProduksi" };
+function momBadge(id, num) {
+  const s = isLead() ? prevSnap() : null;
+  if (!s || !s.counts) return "";
+  const before = Number(s.counts[SNAP_KEY[id]]);
+  if (!Number.isFinite(before)) return "";
+  const pct = before ? Math.round((((num || 0) - before) / before) * 100) : null;
+  return `<div class="kpi-mom">${monthName(s.month, true)}: ${nf(before)}${pct !== null ? ` <span class="delta${pct < 0 ? " down" : pct === 0 ? " zero" : ""}">${pct > 0 ? "+" : ""}${pct}%</span>` : ""}</div>`;
+}
+
+// ----- KPI tim saat ini (read-only dari sheet Lark, semua akun) -----
+async function loadKpi({ refresh = false } = {}) {
+  if (refresh) { ui.kpiBusy = true; render(); }
+  try { ui.kpi = refresh ? await api("/api/v17/kpi/refresh", {}) : await api("/api/v17/kpi"); ui.kpiErr = ""; } catch (e) { ui.kpiErr = e.message; }
+  ui.kpiBusy = false;
+  if (currentPage() === "kpi") render();
+}
+const PCT_RE = /^-?\d+(?:[.,]\d+)?\s*%$/;
+function pctClass(v) {
+  if (!PCT_RE.test(String(v).trim())) return "";
+  const n = parseFloat(String(v).replace(",", "."));
+  return n >= 100 ? "good" : n >= 70 ? "mid" : "low";
+}
+function kpiTable(sheet) {
+  const width = Math.max(sheet.headers.length, ...sheet.rows.map((r) => r.cells.length));
+  const head = Array.from({ length: width }, (_, i) => sheet.headers[i] || "");
+  return `<div class="ig-table-wrap"><table class="kpi-table">
+    <thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
+    <tbody>${sheet.rows.map((r) => `<tr>${head.map((_, i) => { const v = r.cells[i] || ""; const c = pctClass(v); return `<td${c ? ` class="pct ${c}"` : ""}>${esc(v)}</td>`; }).join("")}</tr>`).join("")}</tbody>
+  </table></div>`;
+}
+function kpiView() {
+  const k = ui.kpi;
+  if (!k && ui.kpiErr) return `<div class="page-card"><div class="pad"><p class="msg err">${esc(ui.kpiErr)}</p><button class="btn secondary" data-act="kpiRetry">Coba lagi</button></div></div>`;
+  if (!k) return `<p class="empty">Memuat KPI tim…</p>`;
+  const s = k.sheet;
+  const lead = isLead();
+  const body = !s
+    ? `<p class="all-clear">${lead ? "KPI belum pernah ditarik. Pastikan app Lark sudah ditambahkan ke file KPI (cukup akses baca), lalu klik Tarik ulang." : "KPI tim belum tersedia. Ray sedang menyiapkannya."}</p>`
+    : !s.rows.length ? `<p class="all-clear">Range ${esc(s.range)} di sheet masih kosong.</p>` : kpiTable(s);
+  const ps = lead ? (ui.snaps || []).find((x) => x.month < curMonth() && x.kpi && x.kpi.rows && x.kpi.rows.length) : null;
+  return `<div class="home">
+    <div class="list-head flush"><span class="hint">${s ? `Diperbarui ${esc(fmtDateTime(s.fetchedAt))}. Ditarik otomatis tiap jam pada jam kerja.` : ""}</span>
+      ${k.canRefresh ? `<button class="btn secondary inline" data-act="kpiRefresh" ${ui.kpiBusy ? "disabled" : ""}>${ui.kpiBusy ? "Menarik…" : "Tarik ulang"}</button>` : ""}</div>
+    ${ui.kpiErr ? `<p class="msg err">${esc(ui.kpiErr)}</p>` : ""}
+    ${lead && k.error ? `<p class="msg err">Tarikan terakhir gagal: ${esc(k.error)}</p>` : ""}
+    ${k.note ? `<p class="msg info">${esc(k.note)}</p>` : ""}
+    <section class="box glass">
+      <h2>KPI tim saat ini${s && s.sheetTitle ? ` <small>Tab "${esc(s.sheetTitle)}" ${esc(s.range)}</small>` : ""}</h2>
+      ${body}
+      <p class="hint">Hanya baca. Angka diubah langsung di sheet Lark.</p>
+    </section>
+    ${ps ? `<section class="box glass"><h2>KPI ${esc(monthName(ps.month))} <small><button class="linklike" data-act="kpiPrev">${ui.kpiPrev ? "Sembunyikan" : "Tampilkan"}</button></small></h2>
+      ${ui.kpiPrev ? kpiTable(ps.kpi) : `<p class="hint">Tabel KPI dari snapshot bulan lalu, untuk pembanding. Hanya terlihat olehmu.</p>`}</section>` : ""}
+  </div>`;
+}
+function bindKpi() {
+  bindCommon();
+  on("kpiRetry", () => { ui.kpiErr = ""; ui.kpi = null; render(); loadKpi(); });
+  on("kpiRefresh", () => loadKpi({ refresh: true }));
+  on("kpiPrev", () => { ui.kpiPrev = !ui.kpiPrev; render(); });
+  if (!ui.kpi && !ui.kpiErr && !ui.kpiLoading) { ui.kpiLoading = true; loadKpi().finally(() => { ui.kpiLoading = false; }); }
+  if (isLead() && !ui.snaps) loadSnaps();
+}
+
+// ----- Kesehatan sistem dan kuota (khusus Ray) -----
+async function loadHealth({ check = false } = {}) {
+  if (check) { ui.healthBusy = true; render(); }
+  try { ui.health = check ? await api("/api/v17/health/check", {}) : await api("/api/v17/health"); ui.healthErr = ""; } catch (e) { ui.healthErr = e.message; }
+  ui.healthBusy = false;
+  // Status token belum pernah dicek (server baru di-deploy): cek sekali otomatis saat halaman dibuka.
+  if (!check && ui.health && !ui.health.metaCheckedAt && !ui.healthAutoChecked && currentPage() === "health") { ui.healthAutoChecked = true; return loadHealth({ check: true }); }
+  if (currentPage() === "health") render(); else renderSide();
+}
+function healthProblems() {
+  const h = ui.health;
+  if (!h) return 0;
+  const svc = Object.values(h.services || {}).filter((s) => s.configured && s.ok === false).length;
+  const tok = Object.values(h.metaTokens || {}).filter((t) => t.connected && t.valid === false).length;
+  return svc + tok;
+}
+function quotaCard(title, used, limit, foot) {
+  const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  return `<div class="kpi glass">
+    <div class="kpi-top"><b>${esc(title)}</b></div>
+    <div class="kpi-num">${nf(used)}<small>/ ${nf(limit)}</small></div>
+    <div class="track quota-track"><i class="${pct >= 80 ? "hot" : pct >= 50 ? "warm" : ""}" data-css="width:${pct}%"></i></div>
+    <div class="kpi-foot">${foot}</div>
+  </div>`;
+}
+function healthView() {
+  const h = ui.health;
+  if (!h && ui.healthErr) return `<div class="page-card"><div class="pad"><p class="msg err">${esc(ui.healthErr)}</p><button class="btn secondary" data-act="healthRetry">Coba lagi</button></div></div>`;
+  if (!h) return `<p class="empty">Memuat kesehatan sistem…</p>`;
+  const q = h.quota || {};
+  const now = new Date();
+  const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const proj = Math.round(((q.larkCalls || 0) / Math.max(1, now.getDate())) * dim);
+  const svcRows = Object.entries(h.services || {}).map(([, s]) => {
+    const pill = !s.configured ? `<span class="pill wait">Belum diatur</span>` : s.ok === true ? `<span class="pill done">Lancar</span>` : s.ok === false ? `<span class="pill late">Gagal</span>` : `<span class="pill wait">Belum ada data</span>`;
+    return `<tr><td>${esc(s.label)}${s.ok === false && s.lastError ? `<small class="err-line">${esc(s.lastError)}</small>` : ""}</td><td>${pill}</td><td>${esc(s.lastOkAt ? ago(new Date(s.lastOkAt).toISOString()) : "-")}</td><td>${esc(s.dataAt ? fmtDateTime(s.dataAt) : "-")}</td></tr>`;
+  }).join("");
+  const tokens = IG_ACCS.map((acc) => {
+    const t = (h.metaTokens || {})[acc] || {};
+    if (!t.connected) return `<div class="tok glass"><div class="tok-head"><b>Instagram ${acc}</b><span class="pill wait">Belum terhubung</span></div><p class="hint">Hubungkan token di Pengaturan.</p></div>`;
+    const pill = t.valid === true ? `<span class="pill done">Valid</span>` : t.valid === false ? `<span class="pill late">Tidak valid</span>` : `<span class="pill wait">Belum dicek</span>`;
+    const exp = t.expiresAt ? (t.kind === "ig" ? `Berlaku sampai ${fmtDay(t.expiresAt)}, diperpanjang otomatis` : `Kedaluwarsa ${fmtDay(t.expiresAt)}`) : "Tidak kedaluwarsa";
+    return `<div class="tok glass">
+      <div class="tok-head"><b>Instagram ${acc}</b>${pill}</div>
+      <dl class="facts tok-facts">
+        <dt>Masa berlaku</dt><dd>${esc(exp)}</dd>
+        ${t.dataAccessUntil ? `<dt>Batas akses data</dt><dd>${esc(fmtDay(t.dataAccessUntil))}</dd>` : ""}
+        ${t.scopes && t.scopes.length ? `<dt>Izin</dt><dd>${esc(t.scopes.join(", "))}</dd>` : ""}
+        <dt>Dicek</dt><dd>${esc(t.checkedAt ? ago(new Date(t.checkedAt).toISOString()) : "belum pernah")}</dd>
+      </dl>
+      ${t.error || t.syncError ? `<p class="msg err">${esc(t.error || t.syncError)}</p>` : ""}
+    </div>`;
+  }).join("");
+  const app = h.app;
+  const cur = (ui.update && ui.update.current) || "";
+  return `<div class="home">
+    <div class="list-head flush"><span class="hint">Angka kuota adalah perkiraan dari server. Data kesehatan disimpan paling sering sekali per jam supaya hemat kuota.</span>
+      <button class="btn secondary inline" data-act="healthCheck" ${ui.healthBusy ? "disabled" : ""}>${ui.healthBusy ? "Mengecek…" : "Cek sekarang"}</button></div>
+    ${h.note ? `<p class="msg info">${esc(h.note)}</p>` : ""}
+    ${ui.healthErr ? `<p class="msg err">${esc(ui.healthErr)}</p>` : ""}
+    <div class="home-grid kpis">
+      ${quotaCard("Tulis KV hari ini", q.kvWrites || 0, q.kvLimit || 1000, "Batas gratis Cloudflare per hari, reset jam 07.00 WIB.")}
+      ${quotaCard("Panggilan Lark bulan ini", q.larkCalls || 0, q.larkLimit || 10000, `Perkiraan akhir bulan: ${nf(proj)} panggilan.`)}
+    </div>
+    <section class="box glass">
+      <h2>Status layanan</h2>
+      <div class="ig-table-wrap"><table class="ig-table svc-table">
+        <thead><tr><th>Layanan</th><th>Status</th><th>Sukses terakhir</th><th>Data</th></tr></thead>
+        <tbody>${svcRows}</tbody>
+      </table></div>
+    </section>
+    <div class="home-grid two-eq">${tokens}</div>
+    <div class="home-grid two-eq">
+      <section class="box glass">
+        <h2>Log error terbaru</h2>
+        ${(h.errors || []).length ? `<ul class="err-list">${h.errors.map((e) => `<li><span>${esc(fmtDateTime(new Date(e.at).toISOString()))}</span><b>${esc(((h.services || {})[e.service] || {}).label || e.service)}</b><p>${esc(e.message)}</p></li>`).join("")}</ul>` : `<p class="all-clear">Belum ada error tercatat.</p>`}
+      </section>
+      <section class="box glass">
+        <h2>Versi aplikasi</h2>
+        <p class="hint">Rilis terbaru di GitHub: <b>${app && app.version ? `v${esc(app.version)}` : "belum terbaca"}</b>${app && app.seenAt ? `, terdeteksi ${esc(fmtDateTime(app.seenAt))}` : ""}.</p>
+        <p class="hint">Laptop ini: <b>${cur ? `v${esc(cur)}` : "-"}</b>. Laptop tim mendapat pop-up "Update Sekarang" otomatis begitu versi baru terdeteksi.</p>
+      </section>
+    </div>
+  </div>`;
+}
+function bindHealth() {
+  bindCommon();
+  on("healthRetry", () => { ui.healthErr = ""; ui.health = null; render(); loadHealth(); });
+  on("healthCheck", () => loadHealth({ check: true }));
+  if (!ui.health && !ui.healthErr && !ui.healthLoading) { ui.healthLoading = true; loadHealth().finally(() => { ui.healthLoading = false; }); }
+}
+
+// ----- Setup Bulan Baru (khusus Ray) -----
+function defaultSnapMonth() {
+  const d = new Date();
+  if (d.getDate() > 15) return curMonth();
+  const p = new Date(d.getFullYear(), d.getMonth() - 1, 1);
+  return `${p.getFullYear()}-${pad(p.getMonth() + 1)}`;
+}
+const suInputs = () => { const f = ui.form; return { larkUrl: (f.suLark || "").trim(), calendarUrl: (f.suCal || "").trim(), epUrl: (f.suEp || "").trim(), kpiUrl: (f.suKpi || "").trim() }; };
+const suKey = () => JSON.stringify(suInputs());
+const SU_PILL = { ok: ["done", "Lolos"], warn: ["hold", "Lolos, ada catatan"], error: ["late", "Gagal"], skip: ["wait", "Dilewati"] };
+function suCard(title, r) {
+  if (!r) return "";
+  const [cls, label] = SU_PILL[r.status] || SU_PILL.skip;
+  const warns = [...(r.warnings || [])];
+  return `<div class="su-card ${esc(r.status)}">
+    <div class="su-head"><b>${esc(title)}</b><span class="pill ${cls}">${label}</span></div>
+    <p>${esc(r.message || "")}</p>
+    ${r.kpi ? `<p class="su-sub"><b>KPI Tim:</b> ${esc(r.kpi.message || "")}</p>` : ""}
+    ${warns.length ? `<ul class="su-warn">${warns.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
+  </div>`;
+}
+function setupView() {
+  const f = ui.form;
+  const g = ui.gcfg;
+  const v = f.suResult;
+  const sa = (v && v.serviceAccount) || (g && g.serviceAccount) || "";
+  const fresh = v && f.suKey === suKey();
+  const snapOn = f.suSnap !== false;
+  const month = f.suMonth || defaultSnapMonth();
+  const stepLabel = { snapshot: "Snapshot", lark: "Sheet Lark", google: "Google", kpi: "KPI Tim" };
+  return `<div class="settings-grid">
+    <div class="page-card"><div class="pad">
+      <h2>1. Tempel link file bulan baru</h2>
+      <p class="hint">Kosongkan yang tidak berubah. Lark: tambahkan app ke file baru dulu (Add Apps). Google: bagikan file sebagai Editor ke email di bawah.</p>
+      <label for="suLark">Link sheet Lark bulanan (Creative Report Analytic + REQUEST CREATIVE)</label>
+      <input type="url" id="suLark" value="${esc(f.suLark || "")}" placeholder="https://....larksuite.com/sheets/...">
+      <label for="suCal">Link Content Calendar (Google Sheets)</label>
+      <input type="url" id="suCal" value="${esc(f.suCal || "")}" placeholder="https://docs.google.com/spreadsheets/d/...">
+      <label for="suEp">Link EP (Google Slides)</label>
+      <input type="url" id="suEp" value="${esc(f.suEp || "")}" placeholder="https://docs.google.com/presentation/d/...">
+      <label for="suKpi">Link KPI Tim (opsional)</label>
+      <input type="url" id="suKpi" value="${esc(f.suKpi || "")}" placeholder="Kosongkan: KPI ikut tab pertama sheet Lark bulanan, range A46:I67">
+      ${sa ? `<p class="hint">Email service account Google:</p><div class="row-link"><input type="text" id="suSa" value="${esc(sa)}" readonly><button class="btn secondary inline" data-act="suCopySa">Salin</button></div>` : ""}
+      <button class="btn" data-act="suValidate" ${f.suBusy ? "disabled" : ""}>${f.suBusy === "validate" ? "Mengetes koneksi…" : "Tes koneksi"}</button>
+      ${g ? `<p class="hint">Sekarang: ${g.calendar ? esc(g.calendar.title) : "kalender belum diisi"}; ${g.ep ? esc(g.ep.title) : "EP belum diisi"}.</p>` : ""}
+    </div></div>
+    <div class="page-card"><div class="pad">
+      <h2>2. Hasil tes</h2>
+      ${!v ? `<p class="hint">Klik Tes koneksi. Tes hanya membaca file, konfigurasi aktif belum diubah.</p>` : `
+        ${!fresh ? `<p class="msg info">Link diubah setelah tes. Tes ulang dulu sebelum menerapkan.</p>` : ""}
+        ${suCard("Sheet Lark", v.lark)}${suCard("Content Calendar", v.calendar)}${suCard("Editorial Plan", v.ep)}`}
+      <h2 class="su-gap">3. Snapshot dan terapkan</h2>
+      <label class="check"><input type="checkbox" id="suSnap" ${snapOn ? "checked" : ""}> Simpan snapshot bulan yang ditutup (pembanding MoM)</label>
+      <label for="suMonth">Bulan snapshot</label>
+      <input type="month" id="suMonth" value="${esc(month)}" ${snapOn ? "" : "disabled"}>
+      <p class="hint">Snapshot menyimpan total output tim, request, EP, ringkasan Instagram, dan tabel KPI ${esc(monthName(month))} sebelum link diganti. Maksimal 12 bulan tersimpan.</p>
+      <button class="btn" data-act="suApply" ${f.suBusy || !fresh || !v.ready ? "disabled" : ""}>${f.suBusy === "apply" ? "Menerapkan…" : "Terapkan"}</button>
+      ${v && fresh && !v.ready ? `<p class="hint">Perbaiki yang merah dulu, lalu tes ulang.</p>` : ""}
+      ${f.suSteps ? `<ul class="su-steps">${f.suSteps.map((s) => `<li class="${esc(s.status)}"><b>${esc(stepLabel[s.step] || s.step)}</b> ${esc(s.message)}${(s.warnings || []).map((w) => `<small>${esc(w)}</small>`).join("")}</li>`).join("")}</ul>` : ""}
+      ${f.msg ? `<p class="msg ${f.msgType}" role="status">${esc(f.msg)}</p>` : ""}
+    </div></div>
+  </div>`;
+}
+function bindSetup() {
+  bindCommon();
+  keep(["suLark", "suCal", "suEp", "suKpi"]);
+  const snap = $("suSnap");
+  if (snap) snap.addEventListener("change", () => { ui.form.suSnap = snap.checked; render(); });
+  const mon = $("suMonth");
+  if (mon) mon.addEventListener("change", () => { ui.form.suMonth = mon.value; render(); });
+  ["suLark", "suCal", "suEp", "suKpi"].forEach((id) => { const el = $(id); if (el) el.addEventListener("change", () => { if (ui.form.suResult) render(); }); });
+  if (!ui.gcfg && !ui.gcfgLoading) { ui.gcfgLoading = true; api("/api/google").then((g) => { ui.gcfg = g; }).catch(() => { ui.gcfg = { serviceAccount: "" }; }).finally(() => { ui.gcfgLoading = false; if (currentPage() === "setup") render(); }); }
+  on("suCopySa", () => { const el = $("suSa"); el.select(); navigator.clipboard.writeText(el.value).catch(() => document.execCommand("copy")); setMsg("Email service account disalin.", "ok"); });
+  on("suValidate", async () => {
+    const body = suInputs();
+    if (!body.larkUrl && !body.calendarUrl && !body.epUrl && !body.kpiUrl) return setMsg("Tempel minimal satu link.", "err");
+    if (body.larkUrl && !/\/sheets\//.test(body.larkUrl)) return setMsg("Link Lark harus berisi /sheets/.", "err");
+    Object.assign(ui.form, { suBusy: "validate", msg: "", suSteps: null }); render();
+    try {
+      const r = await api("/api/v17/setup/validate", body);
+      Object.assign(ui.form, { suResult: r, suKey: JSON.stringify(body), suBusy: "" });
+      if (!ui.form.suMonth) ui.form.suMonth = r.snapshotMonth;
+    } catch (e) { Object.assign(ui.form, { suBusy: "", msg: e.message, msgType: "err" }); }
+    render();
+  });
+  on("suApply", async () => {
+    const body = { ...suInputs(), snapshot: ui.form.suSnap !== false, month: ui.form.suMonth || defaultSnapMonth() };
+    Object.assign(ui.form, { suBusy: "apply", msg: "" }); render();
+    try {
+      const r = await api("/api/v17/setup/apply", body);
+      Object.assign(ui.form, { suBusy: "", suSteps: r.steps, msg: r.ok ? "Selesai. Semua widget tim ikut file baru dalam 5 menit." : "Sebagian langkah gagal. Lihat daftar di atas.", msgType: r.ok ? "ok" : "err" });
+      if (r.ok) Object.assign(ui.form, { suLark: "", suCal: "", suEp: "", suKpi: "", suResult: null, suKey: "" });
+      ui.gcfg = null; ui.kpi = null; ui.snaps = null; ui.health = null;
+      await loadState();
+      return;
+    } catch (e) { Object.assign(ui.form, { suBusy: "", msg: e.message, msgType: "err" }); }
+    render();
+  });
+}
+
+// ----- Catatan Lead privat (khusus Ray) -----
+const NOTE_LABEL = { performance: "Performance", development: "Development", potential: "Potential", arahan: "Arahan" };
+const NOTE_ORDER = Object.keys(NOTE_LABEL);
+async function loadNotes() {
+  const month = ui.noteMonth || curMonth();
+  try { ui.notes = await api(`/api/v17/lead-notes?month=${encodeURIComponent(month)}`); ui.notesErr = ""; } catch (e) { ui.notesErr = e.message; }
+  if (currentPage() === "notes") render();
+}
+const noteMembersList = () => (ui.notes && ui.notes.members) || MEMBERS.filter((m) => m.id !== "ray").map((m) => ({ id: m.id, name: m.name, block: m.block }));
+const noteMemberName = (id) => (noteMembersList().find((m) => m.id === id) || {}).name || id;
+function noteSummary() {
+  const month = ui.noteMonth || curMonth();
+  const items = (ui.notes && ui.notes.items) || [];
+  const lines = [`Bagian 6. Catatan per anggota tim (${monthName(month)})`, ""];
+  for (const m of noteMembersList()) {
+    const mine = items.filter((n) => n.member === m.id);
+    if (!mine.length) continue;
+    lines.push(`${m.name} (${m.block})`);
+    for (const c of NOTE_ORDER) {
+      const list = mine.filter((n) => n.category === c).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+      if (!list.length) continue;
+      lines.push(`${NOTE_LABEL[c]}:`);
+      list.forEach((n) => lines.push(`- ${n.text.replace(/\n+/g, "\n  ")}`));
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trim();
+}
+function notesView() {
+  const f = ui.form;
+  const month = ui.noteMonth || curMonth();
+  const months = [...new Set([curMonth(), month, ...((ui.notes && ui.notes.months) || [])])].sort().reverse();
+  const members = noteMembersList();
+  const all = (ui.notes && ui.notes.items) || [];
+  const shown = all.filter((n) => (!ui.noteMember || n.member === ui.noteMember) && (!ui.noteCat || n.category === ui.noteCat));
+  const editing = f.noteId ? all.find((n) => n.id === f.noteId) : null;
+  return `<div class="settings-grid">
+    <div class="page-card"><div class="pad">
+      <h2>${editing ? "Ubah catatan" : "Catatan baru"}</h2>
+      <p class="hint">Hanya kamu yang bisa melihat catatan ini. Tidak masuk Timeline, notifikasi, atau data tim.</p>
+      <div class="row2">
+        <div><label for="nMember">Anggota</label><select id="nMember">${members.map((m) => `<option value="${esc(m.id)}" ${(f.nMember || ui.noteMember || members[0].id) === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select></div>
+        <div><label for="nCat">Kategori</label><select id="nCat">${NOTE_ORDER.map((c) => `<option value="${c}" ${(f.nCat || ui.noteCat || "performance") === c ? "selected" : ""}>${NOTE_LABEL[c]}</option>`).join("")}</select></div>
+      </div>
+      <label for="nText">Catatan untuk ${esc(monthName(month))}</label>
+      <textarea id="nText" rows="5" maxlength="2000" placeholder="Contoh: Konsisten upload sebelum deadline, perlu latihan copywriting hook.">${esc(f.nText || "")}</textarea>
+      <div class="row2">
+        ${editing ? `<button class="btn secondary" data-act="noteCancel">Batal</button>` : `<span></span>`}
+        <button class="btn" data-act="noteSave" ${f.noteBusy ? "disabled" : ""}>${f.noteBusy ? "Menyimpan…" : editing ? "Simpan perubahan" : "Simpan catatan"}</button>
+      </div>
+      ${f.msg ? `<p class="msg ${f.msgType}" role="status">${esc(f.msg)}</p>` : ""}
+      <h2 class="su-gap">Bahan Bagian 6 Monthly Report</h2>
+      <p class="hint">Menyusun semua catatan ${esc(monthName(month))} per anggota dan kategori, siap tempel ke dokumen.</p>
+      <button class="btn secondary" data-act="noteCopy" ${all.length ? "" : "disabled"}>Salin Ringkasan Bagian 6</button>
+    </div></div>
+    <div class="page-card"><div class="pad">
+      <div class="note-filters">
+        <select id="nfMonth" aria-label="Bulan">${months.map((m) => `<option value="${m}" ${m === month ? "selected" : ""}>${esc(monthName(m))}</option>`).join("")}</select>
+        <select id="nfMember" aria-label="Anggota"><option value="">Semua anggota</option>${members.map((m) => `<option value="${esc(m.id)}" ${ui.noteMember === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select>
+        <select id="nfCat" aria-label="Kategori"><option value="">Semua kategori</option>${NOTE_ORDER.map((c) => `<option value="${c}" ${ui.noteCat === c ? "selected" : ""}>${NOTE_LABEL[c]}</option>`).join("")}</select>
+      </div>
+      ${ui.notesErr ? `<p class="msg err">${esc(ui.notesErr)}</p>` : ""}
+      ${!ui.notes && !ui.notesErr ? `<p class="hint">Memuat…</p>` : !shown.length ? `<p class="all-clear">Belum ada catatan untuk filter ini.</p>` : `<ul class="note-list">${shown.map((n) => `<li class="note ${n.id === f.noteId ? "on" : ""}">
+          <div class="note-head">${memberAvatar(n.member, "sm")}<b>${esc(noteMemberName(n.member))}</b><span class="note-cat ${esc(n.category)}">${esc(NOTE_LABEL[n.category] || n.category)}</span><small>${esc(fmtDateTime(n.updatedAt))}</small></div>
+          <p class="note-text">${esc(n.text)}</p>
+          <div class="note-tools"><button class="linklike" data-note-edit="${esc(n.id)}">Ubah</button><button class="linklike" data-note-del="${esc(n.id)}">Hapus</button></div>
+        </li>`).join("")}</ul>`}
+    </div></div>
+  </div>`;
+}
+function bindNotes() {
+  bindCommon();
+  keep(["nText"]);
+  const sel = (id, fn) => { const el = $(id); if (el) el.addEventListener("change", () => fn(el.value)); };
+  sel("nMember", (v) => { ui.form.nMember = v; });
+  sel("nCat", (v) => { ui.form.nCat = v; });
+  sel("nfMonth", (v) => { ui.noteMonth = v; ui.notes = null; ui.form = {}; render(); loadNotes(); });
+  sel("nfMember", (v) => { ui.noteMember = v; render(); });
+  sel("nfCat", (v) => { ui.noteCat = v; render(); });
+  if (!ui.notes && !ui.notesErr && !ui.notesLoading) { ui.notesLoading = true; loadNotes().finally(() => { ui.notesLoading = false; }); }
+  on("noteCancel", () => { ui.form = {}; render(); });
+  on("noteSave", async () => {
+    const f = ui.form;
+    const members = noteMembersList();
+    const body = { id: f.noteId || "", month: ui.noteMonth || curMonth(), member: f.nMember || ui.noteMember || members[0].id, category: f.nCat || ui.noteCat || "performance", text: (f.nText || "").trim() };
+    if (!body.text) return setMsg("Catatan masih kosong.", "err");
+    f.noteBusy = true; render();
+    try {
+      await api("/api/v17/lead-notes/save", body);
+      ui.form = { msg: body.id ? "Catatan diubah." : "Catatan tersimpan.", msgType: "ok", nMember: body.member, nCat: body.category };
+      await loadNotes();
+    } catch (e) { f.noteBusy = false; setMsg(e.message, "err"); }
+  });
+  document.querySelectorAll("[data-note-edit]").forEach((b) => b.addEventListener("click", () => {
+    const n = ((ui.notes && ui.notes.items) || []).find((x) => x.id === b.dataset.noteEdit);
+    if (!n) return;
+    ui.form = { noteId: n.id, nMember: n.member, nCat: n.category, nText: n.text };
+    render();
+    $("nText")?.focus();
+  }));
+  document.querySelectorAll("[data-note-del]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirmInline(b, "Yakin hapus?")) return;
+    try { await api("/api/v17/lead-notes/delete", { id: b.dataset.noteDel }); ui.form = { msg: "Catatan dihapus.", msgType: "ok" }; await loadNotes(); }
+    catch (e) { setMsg(e.message, "err"); }
+  }));
+  on("noteCopy", () => {
+    const text = noteSummary();
+    navigator.clipboard.writeText(text).then(() => setMsg("Ringkasan Bagian 6 disalin. Tempel ke dokumen Monthly Report.", "ok")).catch(() => setMsg("Gagal menyalin. Coba lagi.", "err"));
+  });
+}
+
 // ---------- Mulai ----------
 async function init() {
   ui.settings = await window.aab.getSettings();
@@ -2864,7 +3343,13 @@ async function init() {
   $("tabCal").addEventListener("click", () => { ui.tab = "cal"; ui.view = "list"; ui.form = {}; render(); });
   $("btnSettings").addEventListener("click", () => { if (!configured()) return; ui.view = "settings"; ui.form = {}; render(); });
   ui.update = await window.aab.getUpdate();
-  window.aab.onUpdate((u) => { ui.update = u; renderBar(); if (ui.view === "settings") render(); });
+  window.aab.onUpdate((u) => {
+    ui.update = u;
+    // Ray atau tim sudah klik "Update Sekarang" saat unduhan berjalan: pasang otomatis begitu siap.
+    if (u.state === "ready" && ui.installWhenReady) { window.aab.installUpdate(); return; }
+    renderBar(); renderUpdBanner();
+    if (ui.view === "settings") render();
+  });
   $("btnRefresh").addEventListener("click", () => loadState({ refresh: true }));
   $("btnHide").addEventListener("click", () => window.aab.hide());
   $("btnPin").addEventListener("click", async () => { ui.settings = await window.aab.saveSettings({ pinned: !ui.settings.pinned }); renderBar(); });
@@ -2872,6 +3357,7 @@ async function init() {
   document.addEventListener("click", (e) => { if (ui.bellOpen && !e.target.closest("#bellPanel, #btnBell")) toggleBell(false); });
   window.addEventListener("resize", () => { if (ui.bellOpen) renderBellPanel(); closeMention(); });
   window.aab.onOpenRequest((id) => {
+    if (String(id || "").startsWith("update:")) { updateNow(); return; }
     if (String(id || "").startsWith("post:")) { const [, postId, nid] = String(id).split(":"); openNotif(nid, postId); return; }
     if (String(id || "").startsWith("ep:")) { ui.tab = "ep"; ui.epOpen = id.slice(3); ui.view = "detail"; ui.form = {}; render(); return; }
     ui.tab = "request";

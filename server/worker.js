@@ -2414,7 +2414,7 @@ async function healthInfo(env) {
   const metaTokens = {};
   for (const acc of IG_ACCOUNTS) {
     const t = tokens[acc];
-    metaTokens[acc] = t ? { connected: true, kind: t.kind === "fb" ? "fb" : "ig", syncError: t.error || "", ...(h.metaTokens[acc] || {}) } : { connected: false };
+    metaTokens[acc] = t ? { connected: true, kind: t.kind === "fb" ? "fb" : "ig", syncError: t.error || "", expiresAt: t.kind === "fb" ? null : t.expiresAt || null, ...(h.metaTokens[acc] || {}) } : { connected: false };
   }
   return { ok: true, quota, services, errors: h.errors, metaTokens, metaCheckedAt: h.metaCheckedAt || null, app: app || null, updatedAt: h.updatedAt || null };
 }
