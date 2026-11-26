@@ -149,6 +149,7 @@ function render() {
   applyTheme();
   if (!isFull() && ["home", "ig", "feed", "team", "profile", "post", "kpi", "health", "setup", "notes"].includes(ui.tab)) ui.tab = "request";
   if (!isLead() && ["health", "setup", "notes"].includes(ui.tab)) ui.tab = isFull() ? "home" : "request";
+  if (isFull() && isLead() && ui.tab === "input") ui.tab = "home";
   renderBar();
   renderUpdBanner();
   renderSide();
@@ -1388,7 +1389,7 @@ function applyTheme() {
 async function setMode(mode) {
   ui.settings = await window.aab.setMode(mode);
   if (mode === "compact" && ["home", "ig", "feed", "team", "profile", "post", "kpi", "health", "setup", "notes"].includes(ui.tab)) ui.tab = "request";
-  if (mode === "full" && configured() && ui.tab === "request" && ui.view === "list") ui.tab = "home";
+  if (mode === "full" && configured() && (ui.tab === "request" || (isLead() && ui.tab === "input")) && ui.view === "list") ui.tab = "home";
   if (ui.view === "detail" && ui.tab !== "ep") ui.view = "list";
   render();
   if (mode === "full" && isLead()) loadState();
@@ -1470,7 +1471,7 @@ function navItems() {
     { id: "home", label: "Ringkasan", c: "#7FB2EE" },
     { id: "feed", label: "Timeline", c: "#9FD4FF", badge: feedHasNew() ? "Baru" : 0 },
     { id: "request", label: "Request creative", c: "#F3C77A", badge: reqOpen },
-    { id: "input", label: isLead() ? "Dashboard tim" : "Input KPI", c: "#8FE3B5" },
+    ...(!isLead() ? [{ id: "input", label: "Input KPI", c: "#8FE3B5" }] : []),
     { id: "kpi", label: "KPI tim saat ini", c: "#A8E6CF" },
     { group: "KONTEN" },
     { id: "ep", label: "Editorial plan", c: "#FFB4BB", badge: epBadge },

@@ -107,7 +107,7 @@ Notifikasi request baru dicek bersama jadwal sheet (tiap 10 menit di jam kerja).
 
 ## Pembaruan versi 1.7
 
-Halaman baru di versi 1.7 dibuka dari **jendela penuh**. Menu lama Ray yang sebelumnya bernama KPI tim kini berlabel **Dashboard tim** supaya tidak tertukar dengan tampilan sheet KPI.
+Halaman baru di versi 1.7 dibuka dari **jendela penuh**. Menu lama "Dashboard tim" di sidebar Ray sudah dihapus karena isinya sudah tercakup di **Ringkasan** dan **KPI tim saat ini** (tab Dashboard tetap tersedia di mode widget ringkas, dan menu **Input KPI** untuk anggota tim tetap seperti biasa).
 
 - **KPI tim saat ini** (semua akun, hanya baca): membaca range `A46:I67` dari tab pertama sheet KPI Lark, disimpan di cache server, dan diperbarui berkala supaya hemat kuota Lark. Ray punya tombol **Tarik ulang** dan pilihan melihat KPI bulan lalu dari snapshot. Jika file KPI terpisah dari file bulanan, pastikan app Lark sudah ditambahkan ke file KPI (klik **⋯ → More → Add Apps**) minimal dengan akses baca (**Can view** atau **Can edit**).
 - **Notifikasi update otomatis**: setiap ada rilis baru, banner muncul di bagian atas aplikasi (baik mode ringkas maupun jendela penuh) dan pop-up muncul sekali per versi dengan tombol **Update Sekarang**.
