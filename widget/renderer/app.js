@@ -2978,18 +2978,308 @@ async function loadKpi({ refresh = false } = {}) {
   if (currentPage() === "kpi") render();
 }
 const PCT_RE = /^-?\d+(?:[.,]\d+)?\s*%$/;
-function pctClass(v) {
-  if (!PCT_RE.test(String(v).trim())) return "";
-  const n = parseFloat(String(v).replace(",", "."));
-  return n >= 100 ? "good" : n >= 70 ? "mid" : "low";
+const KPI_UPPER = new Set(["AIGC", "IG", "KPI", "PA", "GD", "CC", "ALL", "UI", "UX", "ID"]);
+const KPI_BRAND = { tiktok: "TikTok", youtube: "YouTube", instagram: "Instagram" };
+function kpiNum(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  const cleaned = s.replace(/\s+/g, "").replace(/%$/, "").replace(",", ".");
+  if (!/^-?\d+(?:\.\d+)?$/.test(cleaned)) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+function kpiPct(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  const n = kpiNum(s);
+  if (n === null) return null;
+  return s.endsWith("%") ? n : n * 100;
+}
+function fmtPct(p) {
+  if (p === null || p === undefined || !Number.isFinite(p)) return "-";
+  const r = Math.round(p * 10) / 10;
+  if (Math.abs(r - Math.round(r)) < 0.05) return `${Math.round(r)}%`;
+  return `${r.toFixed(1).replace(".", ",")}%`;
+}
+function kpiTone(p) {
+  if (p === null || p === undefined || !Number.isFinite(p)) return { cls: "", label: "" };
+  if (p >= 100) return { cls: "good", label: "Tercapai" };
+  if (p >= 70) return { cls: "mid", label: "Mendekati" };
+  return { cls: "low", label: "Perlu dorongan" };
+}
+function titleCase(str) {
+  return String(str || "").trim().split(/\s+/).map((w) => {
+    const raw = w.replace(/[^A-Za-z0-9]/g, "");
+    const low = raw.toLowerCase();
+    if (KPI_BRAND[low]) return KPI_BRAND[low];
+    if (KPI_UPPER.has(raw.toUpperCase())) return w.toUpperCase();
+    if (w === "&" || w === "-") return w;
+    return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  }).join(" ");
+}
+function cleanRole(raw) {
+  const s = String(raw || "").trim().replace(/^CREATIVE\s*-\s*/i, "");
+  return titleCase(s);
+}
+function cleanMetricLabel(targetH, actualH, kpiH) {
+  const base = String(targetH || actualH || kpiH || "").trim().replace(/^TARGET\s+/i, "");
+  return titleCase(base);
+}
+function findMemberByName(name) {
+  const q = String(name || "").trim().toLowerCase();
+  if (!q) return null;
+  return MEMBERS.find((m) => {
+    const full = m.name.toLowerCase();
+    const sh = m.short.toLowerCase();
+    return full === q || full.includes(q) || q.includes(full) || q.includes(sh);
+  }) || null;
+}
+function parseKpiBlocks(sheet) {
+  if (!sheet) return { lead: null, people: [], fallback: true };
+  const grid = [];
+  if (Array.isArray(sheet.headers) && sheet.headers.some((c) => String(c || "").trim())) {
+    grid.push(sheet.headers.map((c) => String(c ?? "").trim()));
+  }
+  for (const r of sheet.rows || []) {
+    const cells = (r.cells || []).map((c) => String(c ?? "").trim());
+    if (cells.some(Boolean)) grid.push(cells);
+  }
+  let cur = null;
+  let lead = null;
+  const people = [];
+  const isSectionRow = (c) => {
+    const a = c[0] || "", b = c[1] || "";
+    if (!a || b) return false;
+    if (/^no\.?$/i.test(a) || /^\d+$/.test(a)) return false;
+    return true;
+  };
+  for (let i = 0; i < grid.length; i++) {
+    const c = grid[i];
+    if (isSectionRow(c)) {
+      const weights = {};
+      for (let j = 2; j < c.length; j++) {
+        const w = kpiNum(c[j]);
+        if (w !== null && w > 0 && w <= 1) weights[j] = w;
+      }
+      cur = { rawRole: c[0], role: cleanRole(c[0]), weights, header: null, isLead: /lead/i.test(c[0]) };
+      continue;
+    }
+    if (!cur) continue;
+    // Header utama blok ("No" | "Creative" | ...)
+    if (/^no\.?$/i.test(c[0] || "") && c[1]) {
+      cur.header = c;
+      const noteCell = c.find((x) => /^catatan\s*:/i.test(x)) || "";
+      cur.note = noteCell.replace(/^catatan\s*:\s*/i, "").trim();
+      if (!c[2]) {
+        cur.isLead = true;
+        cur.leadKpiCol = c.findIndex((x, idx) => idx >= 2 && /kpi/i.test(x) && !/^catatan/i.test(x));
+      } else {
+        cur.isLead = false;
+        cur.scoreLabel = c[2];
+        cur.triplets = [];
+        for (let j = 3; j + 1 < c.length; j += 3) {
+          if (!c[j] && !c[j + 1]) continue;
+          cur.triplets.push({
+            idx: j,
+            label: cleanMetricLabel(c[j], c[j + 1], c[j + 2]),
+            targetLabel: c[j] || "",
+            actualLabel: c[j + 1] || "",
+            kpiLabel: c[j + 2] || "",
+            weight: cur.weights[j + 2] ?? null,
+          });
+        }
+        if (cur.triplets.length === 1 && cur.triplets[0].weight === null) cur.triplets[0].weight = 1;
+      }
+      continue;
+    }
+    // Baris nilai anggota (col[0] nomor, col[1] nama)
+    if (cur.header && c[1] && (/^\d+$/.test(c[0] || "") || !c[0])) {
+      const m = findMemberByName(c[1]);
+      if (cur.isLead) {
+        const scoreCol = cur.leadKpiCol >= 0 ? cur.leadKpiCol : 4;
+        lead = {
+          role: cur.role,
+          name: c[1],
+          memberId: m ? m.id : "ray",
+          score: kpiPct(c[scoreCol]),
+          note: cur.note || "",
+        };
+      } else {
+        const metrics = (cur.triplets || []).map((t) => ({
+          label: t.label,
+          target: kpiNum(c[t.idx]),
+          actual: kpiNum(c[t.idx + 1]),
+          pct: kpiPct(c[t.idx + 2]),
+          weight: t.weight,
+        }));
+        people.push({
+          role: cur.role,
+          name: c[1],
+          memberId: m ? m.id : "",
+          short: m ? m.short : c[1].split(/\s+/)[0],
+          score: kpiPct(c[2]),
+          scoreLabel: cur.scoreLabel || "KPI",
+          metrics,
+          extras: [],
+          extraNote: "",
+        });
+      }
+      continue;
+    }
+    // Sub-blok catatan tambahan (col[0] & col[1] kosong, col[2] berisi header teks)
+    if (!c[0] && !c[1] && c[2] && kpiNum(c[2]) === null && people.length) {
+      const next = grid[i + 1];
+      const noteCell = c.find((x) => /^catatan\s*:/i.test(x)) || "";
+      const target = people[people.length - 1];
+      if (noteCell) {
+        const txt = noteCell.replace(/^catatan\s*:\s*/i, "").trim();
+        target.extraNote = txt ? txt.charAt(0).toUpperCase() + txt.slice(1) : "";
+      }
+      if (next && !next[0] && !next[1] && kpiNum(next[2]) !== null) {
+        for (let j = 2; j + 1 < c.length; j += 3) {
+          if (!c[j] || /^catatan/i.test(c[j])) continue;
+          target.extras.push({
+            label: cleanMetricLabel(c[j], c[j + 1], c[j + 2]),
+            target: kpiNum(next[j]),
+            actual: kpiNum(next[j + 1]),
+            pct: kpiPct(next[j + 2]),
+          });
+        }
+        i++;
+      }
+    }
+  }
+  return { lead, people, fallback: !lead && !people.length };
+}
+function kpiAvatar(memberId, name, size = "") {
+  if (memberId) return memberAvatar(memberId, size);
+  return avatar("", size, name);
+}
+function kpiGapText(actual, target) {
+  if (actual === null || target === null) return "";
+  const diff = actual - target;
+  if (diff > 0) return `<span class="kpi-gap good">+${nf(diff)} di atas target</span>`;
+  if (diff === 0) return `<span class="kpi-gap good">Pas target</span>`;
+  return `<span class="kpi-gap low">Kurang ${nf(Math.abs(diff))}</span>`;
+}
+function kpiCards(sheet) {
+  const parsed = parseKpiBlocks(sheet);
+  if (parsed.fallback) return kpiTable(sheet);
+  const meMember = ui.settings.user ? ui.settings.user.member : "";
+  const lead = parsed.lead;
+  const people = parsed.people;
+  const hero = lead ? (() => {
+    const t = kpiTone(lead.score);
+    const barW = Math.max(0, Math.min(100, Math.round(lead.score || 0)));
+    return `<section class="kpi-hero box glass ${t.cls}">
+      <div class="kpi-hero-top">
+        <div class="kpi-hero-who">
+          ${kpiAvatar(lead.memberId, lead.name, "lg")}
+          <div class="kpi-who-txt">
+            <span class="kpi-role-tag">${esc(lead.role)}</span>
+            <h3>${esc(lead.name)}</h3>
+            ${lead.note ? `<small>${esc(lead.note)}</small>` : ""}
+          </div>
+        </div>
+        <div class="kpi-hero-score">
+          <div class="kpi-big-num ${t.cls}">${esc(fmtPct(lead.score))}</div>
+          ${t.label ? `<span class="kpi-pill ${t.cls}">${esc(t.label)}</span>` : ""}
+        </div>
+      </div>
+      <div class="kpi-bar hero"><i class="${t.cls}" data-css="width:${barW}%"></i></div>
+      ${people.length ? `<div class="kpi-strip">${people.map((p) => {
+        const pt = kpiTone(p.score);
+        const mine = meMember && p.memberId === meMember;
+        return `<div class="kpi-chip${mine ? " mine" : ""}">${kpiAvatar(p.memberId, p.name, "xs")}<span>${esc(p.short)}</span><b class="${pt.cls}">${esc(fmtPct(p.score))}</b></div>`;
+      }).join("")}</div>` : ""}
+    </section>`;
+  })() : "";
+
+  const cards = people.length ? `<div class="kpi-grid">${people.map((p) => {
+    const t = kpiTone(p.score);
+    const barW = Math.max(0, Math.min(100, Math.round(p.score || 0)));
+    const mine = meMember && p.memberId === meMember;
+    return `<article class="kpi-person box glass${mine ? " mine" : ""}">
+      <div class="kpi-p-head">
+        <div class="kpi-p-who">
+          ${kpiAvatar(p.memberId, p.name)}
+          <div class="kpi-who-txt">
+            <div class="kpi-p-name"><b>${esc(p.name)}</b>${mine ? `<span class="kpi-you">Kamu</span>` : ""}</div>
+            <small>${esc(p.role)}</small>
+          </div>
+        </div>
+        <div class="kpi-p-score">
+          <strong class="${t.cls}">${esc(fmtPct(p.score))}</strong>
+          ${t.label ? `<span class="kpi-pill ${t.cls}">${esc(t.label)}</span>` : ""}
+        </div>
+      </div>
+      <div class="kpi-bar main"><i class="${t.cls}" data-css="width:${barW}%"></i></div>
+      <div class="kpi-metrics">${p.metrics.map((m) => {
+        const mt = kpiTone(m.pct);
+        const mw = Math.max(0, Math.min(100, Math.round(m.pct || 0)));
+        return `<div class="kpi-m">
+          <div class="kpi-m-top">
+            <span class="kpi-m-lbl">${esc(m.label)}${m.weight !== null ? ` <em class="kpi-wt">Bobot ${Math.round(m.weight * 100)}%</em>` : ""}</span>
+            <b class="kpi-m-pct ${mt.cls}">${esc(fmtPct(m.pct))}</b>
+          </div>
+          <div class="kpi-bar"><i class="${mt.cls}" data-css="width:${mw}%"></i></div>
+          <div class="kpi-m-sub">
+            <span class="kpi-nums"><b>${m.actual !== null ? nf(m.actual) : "-"}</b> / ${m.target !== null ? nf(m.target) : "-"}</span>
+            ${kpiGapText(m.actual, m.target)}
+          </div>
+        </div>`;
+      }).join("")}</div>
+      ${p.extras.length ? `<div class="kpi-extra">
+        <div class="kpi-extra-head"><span>Pencatatan saja</span>${p.extraNote ? `<small>${esc(p.extraNote)}</small>` : ""}</div>
+        <div class="kpi-extra-grid">${p.extras.map((ex) => `<div class="kpi-ex-item">
+          <small>${esc(ex.label)}</small>
+          <div><b>${ex.actual !== null ? nf(ex.actual) : "-"}</b> <span>/ ${ex.target !== null ? nf(ex.target) : "-"}</span><em>${esc(fmtPct(ex.pct))}</em></div>
+        </div>`).join("")}</div>
+      </div>` : ""}
+    </article>`;
+  }).join("")}</div>` : "";
+
+  return `${hero}${cards}`;
 }
 function kpiTable(sheet) {
-  const width = Math.max(sheet.headers.length, ...sheet.rows.map((r) => r.cells.length));
-  const head = Array.from({ length: width }, (_, i) => sheet.headers[i] || "");
-  return `<div class="ig-table-wrap"><table class="kpi-table">
-    <thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead>
-    <tbody>${sheet.rows.map((r) => `<tr>${head.map((_, i) => { const v = r.cells[i] || ""; const c = pctClass(v); return `<td${c ? ` class="pct ${c}"` : ""}>${esc(v)}</td>`; }).join("")}</tr>`).join("")}</tbody>
-  </table></div>`;
+  const all = [];
+  if (Array.isArray(sheet.headers) && sheet.headers.length) all.push(sheet.headers);
+  for (const r of sheet.rows || []) all.push(r.cells || []);
+  const width = Math.max(1, ...all.map((r) => r.length));
+  let pctCols = new Set();
+  const rowsHtml = all.map((raw) => {
+    const cells = Array.from({ length: width }, (_, i) => String(raw[i] ?? "").trim());
+    const a = cells[0], b = cells[1];
+    const isSec = a && !b && !/^no\.?$/i.test(a) && !/^\d+$/.test(a);
+    const isHead = (/^no\.?$/i.test(a) && !!b) || (!a && !b && !!cells[2] && kpiNum(cells[2]) === null);
+    if (isSec) {
+      pctCols = new Set();
+      return `<tr class="kpi-t-sec">${cells.map((v, i) => {
+        if (i === 0) return `<td><b>${esc(v)}</b></td>`;
+        const w = kpiNum(v);
+        return `<td>${w !== null && w > 0 && w <= 1 ? `<span class="kpi-wt">Bobot ${Math.round(w * 100)}%</span>` : esc(v)}</td>`;
+      }).join("")}</tr>`;
+    }
+    if (isHead) {
+      pctCols = new Set();
+      cells.forEach((v, i) => { if (/(?:kpi|%)/i.test(v) && !/^catatan/i.test(v)) pctCols.add(i); });
+      return `<tr class="kpi-t-head">${cells.map((v) => `<th>${esc(v)}</th>`).join("")}</tr>`;
+    }
+    return `<tr>${cells.map((v, i) => {
+      if (!v) return "<td></td>";
+      if (pctCols.has(i) || PCT_RE.test(v)) {
+        const p = kpiPct(v);
+        if (p !== null) {
+          const t = kpiTone(p);
+          return `<td class="pct ${t.cls}">${esc(fmtPct(p))}</td>`;
+        }
+      }
+      const n = kpiNum(v);
+      if (n !== null && i > 0) return `<td>${esc(nf(n))}</td>`;
+      return `<td>${esc(v)}</td>`;
+    }).join("")}</tr>`;
+  }).join("");
+  return `<div class="ig-table-wrap"><table class="kpi-table"><tbody>${rowsHtml}</tbody></table></div>`;
 }
 function kpiView() {
   const k = ui.kpi;
@@ -2997,23 +3287,35 @@ function kpiView() {
   if (!k) return `<p class="empty">Memuat KPI tim…</p>`;
   const s = k.sheet;
   const lead = isLead();
-  const body = !s
-    ? `<p class="all-clear">${lead ? "KPI belum pernah ditarik. Pastikan app Lark sudah ditambahkan ke file KPI (cukup akses baca), lalu klik Tarik ulang." : "KPI tim belum tersedia. Ray sedang menyiapkannya."}</p>`
-    : !s.rows.length ? `<p class="all-clear">Range ${esc(s.range)} di sheet masih kosong.</p>` : kpiTable(s);
+  const mode = ui.kpiMode === "table" ? "table" : "cards";
+  const hasRows = !!(s && s.rows && s.rows.length);
   const ps = lead ? (ui.snaps || []).find((x) => x.month < curMonth() && x.kpi && x.kpi.rows && x.kpi.rows.length) : null;
-  return `<div class="home">
-    <div class="list-head flush"><span class="hint">${s ? `Diperbarui ${esc(fmtDateTime(s.fetchedAt))}. Ditarik otomatis tiap jam pada jam kerja.` : ""}</span>
-      ${k.canRefresh ? `<button class="btn secondary inline" data-act="kpiRefresh" ${ui.kpiBusy ? "disabled" : ""}>${ui.kpiBusy ? "Menarik…" : "Tarik ulang"}</button>` : ""}</div>
+  const content = !s
+    ? `<section class="box glass"><p class="all-clear">${lead ? "KPI belum pernah ditarik. Pastikan app Lark sudah ditambahkan ke file KPI (cukup akses baca), lalu klik Tarik ulang." : "KPI tim belum tersedia. Ray sedang menyiapkannya."}</p></section>`
+    : !hasRows
+      ? `<section class="box glass"><p class="all-clear">Range ${esc(s.range)} di sheet masih kosong.</p></section>`
+      : mode === "table"
+        ? `<section class="box glass"><h2>Tabel asli <small>Tab "${esc(s.sheetTitle || "")}" ${esc(s.range || "")}</small></h2>${kpiTable(s)}</section>`
+        : kpiCards(s);
+  return `<div class="home kpi-page">
+    <div class="kpi-topbar">
+      <div class="kpi-meta">${s ? `<b>${esc(s.sheetTitle || "KPI tim")}</b><span>Diperbarui ${esc(fmtDateTime(s.fetchedAt))} · Tarik otomatis tiap jam kerja · Hanya baca</span>` : "<span>Belum ditarik</span>"}</div>
+      <div class="kpi-actions">
+        ${hasRows ? `<div class="seg kpi-seg" role="tablist" aria-label="Mode tampilan KPI">
+          <button type="button" data-kpimode="cards" aria-pressed="${mode === "cards"}">Kartu</button>
+          <button type="button" data-kpimode="table" aria-pressed="${mode === "table"}">Tabel asli</button>
+        </div>` : ""}
+        ${k.canRefresh ? `<button class="btn secondary inline" data-act="kpiRefresh" ${ui.kpiBusy ? "disabled" : ""}>${ui.kpiBusy ? "Menarik…" : "Tarik ulang"}</button>` : ""}
+      </div>
+    </div>
     ${ui.kpiErr ? `<p class="msg err">${esc(ui.kpiErr)}</p>` : ""}
     ${lead && k.error ? `<p class="msg err">Tarikan terakhir gagal: ${esc(k.error)}</p>` : ""}
     ${k.note ? `<p class="msg info">${esc(k.note)}</p>` : ""}
-    <section class="box glass">
-      <h2>KPI tim saat ini${s && s.sheetTitle ? ` <small>Tab "${esc(s.sheetTitle)}" ${esc(s.range)}</small>` : ""}</h2>
-      ${body}
-      <p class="hint">Hanya baca. Angka diubah langsung di sheet Lark.</p>
-    </section>
-    ${ps ? `<section class="box glass"><h2>KPI ${esc(monthName(ps.month))} <small><button class="linklike" data-act="kpiPrev">${ui.kpiPrev ? "Sembunyikan" : "Tampilkan"}</button></small></h2>
-      ${ui.kpiPrev ? kpiTable(ps.kpi) : `<p class="hint">Tabel KPI dari snapshot bulan lalu, untuk pembanding. Hanya terlihat olehmu.</p>`}</section>` : ""}
+    ${content}
+    ${ps ? `<section class="box glass">
+      <h2>KPI ${esc(monthName(ps.month))} <small><button class="linklike" data-act="kpiPrev">${ui.kpiPrev ? "Sembunyikan" : "Tampilkan"}</button></small></h2>
+      ${ui.kpiPrev ? (mode === "table" ? kpiTable(ps.kpi) : `<div class="kpi-prev-wrap">${kpiCards(ps.kpi)}</div>`) : `<p class="hint">Arsip KPI dari snapshot bulan lalu untuk pembanding. Hanya terlihat olehmu.</p>`}
+    </section>` : ""}
   </div>`;
 }
 function bindKpi() {
@@ -3021,6 +3323,10 @@ function bindKpi() {
   on("kpiRetry", () => { ui.kpiErr = ""; ui.kpi = null; render(); loadKpi(); });
   on("kpiRefresh", () => loadKpi({ refresh: true }));
   on("kpiPrev", () => { ui.kpiPrev = !ui.kpiPrev; render(); });
+  document.querySelectorAll("[data-kpimode]").forEach((b) => b.addEventListener("click", () => {
+    ui.kpiMode = b.dataset.kpimode;
+    render();
+  }));
   if (!ui.kpi && !ui.kpiErr && !ui.kpiLoading) { ui.kpiLoading = true; loadKpi().finally(() => { ui.kpiLoading = false; }); }
   if (isLead() && !ui.snaps) loadSnaps();
 }

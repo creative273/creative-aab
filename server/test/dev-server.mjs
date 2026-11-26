@@ -67,8 +67,30 @@ function igMock(u) {
   return err("unknown " + path);
 }
 
-// v1.7: tab KPI tiruan (A46:I67, contoh saja), cek rilis GitHub, dan debug_token Meta.
-write("x1!A46:F51", [["No", "Nama", "Posisi", "Target", "Realisasi", "Capaian"], [1, "Fitria Azzahra Kurnia", "Social Media Specialist", 60, 48, "80%"], [2, "Athallah Aqil Sukendar", "Graphic Designer", 40, 41, "102,5%"], [3, "Muhammad Albar", "Video Editor", 30, 18, "60%"], [null, null, null, null, null, null], [4, "Rifqi Firega", "AIGC Content Specialist", 100, 72, "72%"]]);
+// v1.7: tab KPI tiruan (A46:I67 sesuai struktur asli 5 blok per role), cek rilis GitHub, dan debug_token Meta.
+write("x1!A46:I66", [
+  ["LEAD CREATIVE", null, null, null, null, null, null, null, null],
+  ["No", "Creative", null, null, "KPI ALL CREATIVE", "Catatan: KPI ALL CREATIVE adalah KPI Lead Creative", 1, null, null],
+  [1, "Ray Sangkhylang", null, null, 1, null, null, null, null],
+  [null, null, null, null, null, null, null, null, null],
+  ["CREATIVE - CONTENT CREATIVE", null, null, null, null, 0.6, null, null, 0.4],
+  ["No", "Creative", "KPI Creative-CC (%)", "Target Upload Konten Instagram", "Konten Terupload", "KPI Total Konten", "Target View Konten", "View Konten", "KPI Total Views"],
+  [1, "Fitria Azzahra Kurnia", 1, 30, 41, 1.3666666666666667, 40000, 37332, 0.9333],
+  [null, null, "Target New Followers Instagram", "Up Followers", "KPI Followers", "Target Up Followers TikTok", "Up Followers", "KPI Followers", "Catatan : baris ini digunakan untuk pencatatan saja"],
+  [null, null, 200, 0, 0, 200, 0, 0, null],
+  [null, null, null, null, null, null, null, null, null],
+  ["CREATIVE - EDITOR & PRODUCTION ASSISTANT", null, null, null, null, 0.6, null, null, 0.4],
+  ["No", "Creative", "KPI Creative-PA (%)", "TARGET VIDEO EDITED", "VIDEO EDITED", "KPI VIDEO", "TARGET SHOWCASE HANDLED", "SHOWCASE HANDLED", "KPI SHOWCASE"],
+  [1, "Muhammad Albar", 1, 26, 26, 1, 1, 2, 2],
+  [null, null, null, null, null, null, null, null, null],
+  ["CREATIVE - MOTION & GRAPHIC DESIGN", null, null, null, null, null, null, null, null],
+  ["No", "Creative", "KPI Creative-GD(%)", "TARGET DESIGN EDITED", "DESIGN CREATE", "KPI GD", null, null, null],
+  [1, "Athallah Aqil Sukendar", 1, 65, 67, 1.03076923076923, null, null, null],
+  [null, null, null, null, null, null, null, null, null],
+  ["CREATIVE - AIGC CONTENT SPECIALIST", null, null, null, null, 0.6, null, null, 0.4],
+  ["No", "Creative", "KPI Creative-AIGC(%)", "TARGET PRODUCTION AIGC CONTENT", "PRODUCTION CREATE", "KPI PRODUCTION", "TARGET UPLOAD AIGC CONTENT", "UPLOAD DONE", "KPI UPLOAD"],
+  [1, "Rifqi Firega", 0.129809523809524, 300, 63, 0.21, 210, 2, 0.00952380952380953],
+]);
 const DEV_LATEST = process.env.DEV_LATEST || "1.7.1";
 globalThis.fetch = async (url, opts = {}) => {
   if (new URL(url).host === "graph.instagram.com") return igMock(new URL(url));
