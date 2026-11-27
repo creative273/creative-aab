@@ -2605,13 +2605,10 @@ function settingsView() {
 function settingsWork(f, lead) {
   return `${updateBox()}
     ${lead ? `<div class="section">
-      <h2>Link sheet bulan ini</h2>
-      <p class="hint">Tiap awal bulan, setelah file baru diduplikat dan app ditambahkan ke file, tempel link file baru di sini.</p>
-      ${isFull() ? `<p class="hint">Atau pakai <button class="linklike" data-act="openSetup">Setup bulan baru</button> untuk tempel 3 link sekaligus, tes koneksi, dan simpan snapshot bulan lalu.</p>` : ""}
-      <label for="sSheet">Link sheet Lark</label><input type="url" id="sSheet" value="${esc(f.sSheet || "")}" placeholder="https://....larksuite.com/sheets/...">
-      <button class="btn" data-act="saveSheet" ${f.busySheet ? "disabled" : ""}>${f.busySheet ? "Mengecek file…" : "Pakai file ini"}</button>
+      <h2>File bulanan</h2>
+      <p class="hint">Atur link sheet Lark, Content Calendar, EP, tes koneksi, dan simpan snapshot bulan lalu lewat satu halaman.</p>
+      <button class="btn secondary" data-act="openSetup">Buka Setup bulan baru</button>
     </div>
-    ${googleSettings()}
     ${igSettings()}
     <div class="section">
       <h2>Akun tim</h2>
@@ -2628,46 +2625,12 @@ function settingsWork(f, lead) {
     ${f.msg ? `<p class="msg ${f.msgType}" role="status">${f.msgHtml ? f.msg : esc(f.msg)}</p>` : ""}`;
 }
 
-function googleSettings() {
-  const g = ui.gcfg;
-  const f = ui.form;
-  if (!g) return `<div class="section"><h2>Content Calendar dan EP</h2><p class="hint">Memuat…</p></div>`;
-  return `<div class="section">
-    <h2>Content Calendar dan EP</h2>
-    ${g.serviceAccount ? `<p class="hint">Tiap file baru dibagikan sebagai <b>Editor</b> ke email ini:</p>
-      <div class="row-link"><input type="text" id="saEmail" value="${esc(g.serviceAccount)}" readonly><button class="btn secondary inline" data-act="copySa">Salin</button></div>`
-      : `<p class="msg info">Akses Google belum diatur di server (secret GOOGLE_SA). Lihat panduan.</p>`}
-    <p class="hint">Sekarang: ${g.calendar ? esc(g.calendar.title) : "kalender belum diisi"}; ${g.ep ? esc(g.ep.title) : "EP belum diisi"}.</p>
-    <label for="gCal">Link Content Calendar (Google Sheets)</label><input type="url" id="gCal" value="${esc(f.gCal || "")}" placeholder="https://docs.google.com/spreadsheets/d/...">
-    <label for="gEp">Link EP (Google Slides)</label><input type="url" id="gEp" value="${esc(f.gEp || "")}" placeholder="https://docs.google.com/presentation/d/...">
-    <button class="btn" data-act="saveGoogle" ${f.busyG || !g.serviceAccount ? "disabled" : ""}>${f.busyG ? "Mengecek file…" : "Pakai link ini"}</button>
-  </div>`;
-}
-
 function bindSettings() {
   bindCommon();
-  on("openSetup", () => goPage("setup"));
+  on("openSetup", async () => { if (!isFull()) await setMode("full"); goPage("setup"); });
   bindLook();
   bindIgSettings();
-  keep(["sSheet", "pOld", "pNew", "gCal", "gEp"]);
-  if (isLead() && !ui.gcfg) api("/api/google").then((g) => { ui.gcfg = g; if (ui.view === "settings") render(); }).catch((e) => { ui.gcfg = { serviceAccount: "" }; ui.form.msg = e.message; ui.form.msgType = "err"; render(); });
-  on("copySa", () => { const el = $("saEmail"); el.select(); navigator.clipboard.writeText(el.value).catch(() => document.execCommand("copy")); setMsg("Email service account disalin.", "ok"); });
-  on("saveGoogle", async () => {
-    const calendarUrl = (ui.form.gCal || "").trim();
-    const epUrl = (ui.form.gEp || "").trim();
-    if (!calendarUrl && !epUrl) return setMsg("Tempel minimal satu link.", "err");
-    ui.form.busyG = true; render();
-    try {
-      const res = await api("/api/google", { calendarUrl, epUrl });
-      ui.gcfg = res;
-      const parts = [];
-      if (calendarUrl) parts.push(`Kalender: ${res.calendar.tabs.map((t) => t.account).join(" dan ")}, ${res.calendarRows} baris.`);
-      if (epUrl) parts.push(`EP: ${res.epItems} konten.`);
-      ui.form = { msg: `Tersimpan. ${parts.join(" ")}${(res.warnings || []).map((w) => ` ${w}`).join("")}`, msgType: "ok" };
-      await loadState();
-    } catch (e) { ui.form.busyG = false; ui.form.msg = e.message; ui.form.msgType = "err"; }
-    render();
-  });
+  keep(["pOld", "pNew"]);
   on("logout", () => logout(""));
   on("openAccounts", () => { ui.view = "accounts"; ui.form = {}; ui.accounts = null; render(); loadAccounts(); });
   const login = $("sLogin");
@@ -2690,19 +2653,6 @@ function bindSettings() {
       ui.form = { msg: "Password diganti.", msgType: "ok" };
       render();
     } catch (e) { f.busyPw = false; setMsg(e.message, "err"); }
-  });
-  on("saveSheet", async () => {
-    const url = (ui.form.sSheet || "").trim();
-    if (!/\/sheets\//.test(url)) return setMsg("Tempel link sheet Lark yang berisi /sheets/.", "err");
-    ui.form.busySheet = true; render();
-    try {
-      const res = await api("/api/config", { url });
-      ui.data = res;
-      const warn = (res.warnings || []).map((w) => `<br>• ${esc(w)}`).join("");
-      ui.form = { msg: `File bulan ini tersimpan. ${res.requests.length} request terbaca.${warn}`, msgHtml: true, msgType: warn ? "info" : "ok" };
-      await checkNewRequests(res.requests || []);
-    } catch (e) { ui.form.busySheet = false; setMsg(e.message, "err"); }
-    render();
   });
 }
 
