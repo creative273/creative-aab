@@ -206,11 +206,21 @@ function render() {
     view.innerHTML = ui.view === "detail" ? epDetailView() : epListView();
     ui.view === "detail" ? bindEpDetail() : bindEpList();
   } else if (ui.tab === "cal" && canCal()) {
-    view.innerHTML = card(ui.view === "detail" ? calFormView() : calListView());
-    ui.view === "detail" ? bindCalForm() : bindCalList();
+    if (isFull() && ui.view !== "detail") {
+      view.innerHTML = calListView();
+      bindCalList();
+    } else {
+      view.innerHTML = card(ui.view === "detail" ? calFormView() : calListView());
+      ui.view === "detail" ? bindCalForm() : bindCalList();
+    }
   } else if (ui.tab === "request") {
-    view.innerHTML = card(ui.view === "detail" ? detailView() : requestListView());
-    ui.view === "detail" ? bindDetail() : bindRequestList();
+    if (isFull()) {
+      view.innerHTML = requestFullView();
+      bindRequestFull();
+    } else {
+      view.innerHTML = card(ui.view === "detail" ? detailView() : requestListView());
+      ui.view === "detail" ? bindDetail() : bindRequestList();
+    }
   } else {
     view.innerHTML = card(inputView());
     bindInput();
@@ -419,6 +429,188 @@ function bindDetail() {
       ui.form.busy = false; ui.form.decide = null; setMsg(e.message, "err");
     }
   });
+}
+
+function reqTone(r) {
+  if (r.status === "done") return "done";
+  if (r.decision === "REJECT") return "rej";
+  if (r.decision === "PENDING") return "hold";
+  if (!r.approved) return "wait";
+  return "open";
+}
+function reqInitials(name) {
+  const parts = String(name || "?").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  return parts.length === 1 ? parts[0].slice(0, 2).toUpperCase() : (parts[0][0] + parts[1][0]).toUpperCase();
+}
+function reqGroupsList() {
+  const reqs = [...visibleRequests()].reverse();
+  const notDone = reqs.filter((r) => r.status !== "done");
+  const done = reqs.filter((r) => r.status === "done");
+  if (isLead()) {
+    return {
+      baru: ["Perlu keputusan", notDone.filter((r) => !r.decision), "wait"],
+      open: ["Dikerjakan", notDone.filter((r) => r.approved), "open"],
+      pending: ["Pending", notDone.filter((r) => r.decision === "PENDING"), "hold"],
+      reject: ["Reject", notDone.filter((r) => r.decision === "REJECT"), "rej"],
+      done: ["Selesai", done, "done"],
+      all: ["Semua", reqs, "all"],
+    };
+  }
+  return {
+    open: ["Belum selesai", notDone, "open"],
+    done: ["Selesai", done, "done"],
+    all: ["Semua", reqs, "all"],
+  };
+}
+function requestFullView() {
+  const blocked = stateBlock();
+  if (blocked) return `<div class="page-card">${blocked}</div>`;
+  const groups = reqGroupsList();
+  const lead = isLead();
+  const filter = ui.filter && groups[ui.filter] ? ui.filter : lead && groups.baru[1].length ? "baru" : "open";
+  const q = (ui.reqQuery || "").trim().toLowerCase();
+  const baseList = groups[filter][1];
+  const list = q
+    ? baseList.filter((r) => [r.info, r.user, r.deadline, r.submitted, r.remark].some((x) => String(x || "").toLowerCase().includes(q)))
+    : baseList;
+  const active = list.find((x) => x.id === ui.openId) || list[0] || null;
+  if (active && ui.openId !== active.id) ui.openId = active.id;
+
+  const statKeys = lead ? ["baru", "open", "pending", "done"] : ["open", "done", "all"];
+  const statsBar = `<div class="req-kpis">${statKeys.map((k) => {
+    const [lbl, arr, tone] = groups[k];
+    return `<button type="button" class="req-kpi glass ${tone}${filter === k ? " on" : ""}" data-filter="${k}">
+      <span class="req-kpi-lbl">${esc(lbl)}</span>
+      <strong class="req-kpi-num">${arr.length}</strong>
+    </button>`;
+  }).join("")}</div>`;
+
+  const filterPills = `<div class="req-pills" role="group" aria-label="Saring status request">
+    ${Object.entries(groups).map(([k, [lbl, arr]]) => `<button type="button" data-filter="${k}" aria-pressed="${filter === k}">${esc(lbl)} <span>${arr.length}</span></button>`).join("")}
+  </div>`;
+
+  const empty = {
+    baru: "Tidak ada request baru yang perlu keputusan.",
+    open: lead ? "Tidak ada request yang sedang dikerjakan." : "Semua request sudah selesai.",
+    pending: "Tidak ada request yang di-pending.",
+    reject: "Tidak ada request yang di-reject.",
+    done: "Belum ada request yang selesai.",
+    all: "Belum ada request di sheet bulan ini.",
+  }[filter];
+
+  const cards = list.length
+    ? `<ul class="req-cards">${list.map((r) => {
+        const tone = reqTone(r);
+        const onCur = active && active.id === r.id;
+        return `<li><button type="button" class="req-card ${tone}${onCur ? " on" : ""}" data-id="${esc(r.id)}" ${onCur ? 'aria-current="true"' : ""}>
+          <div class="req-card-top">
+            <span class="req-ini">${esc(reqInitials(r.user))}</span>
+            <b class="req-who">${esc(r.user || "Tanpa nama")}</b>
+            ${statusPill(r)}
+          </div>
+          <p class="req-card-txt">${esc(r.info)}</p>
+          <div class="req-card-foot">
+            ${r.deadline ? `<span class="req-dl">Deadline ${esc(r.deadline)}</span>` : `<span>${esc(r.submitted || "Tanpa deadline")}</span>`}
+            ${r.output ? `<span class="req-has-out">Output ada</span>` : ""}
+          </div>
+        </button></li>`;
+      }).join("")}</ul>`
+    : `<p class="empty">${q ? "Tidak ada request yang cocok dengan pencarian." : empty}</p>`;
+
+  const detailPane = active ? requestDetailPane(active) : `<div class="split-empty">${q ? "Ubah kata kunci pencarian atau pilih filter lain." : empty}</div>`;
+
+  return `<div class="req-wrap">
+    ${statsBar}
+    <div class="req-split">
+      <section class="glass req-pane-list">
+        <div class="req-list-top">
+          <input type="search" id="reqSearch" class="req-search" value="${esc(ui.reqQuery || "")}" placeholder="Cari isi request, peminta, atau deadline…">
+          ${filterPills}
+        </div>
+        <div class="req-scroll">${cards}</div>
+      </section>
+      <section class="glass req-pane-detail">${detailPane}</section>
+    </div>
+  </div>`;
+}
+
+function requestDetailPane(r) {
+  const f = ui.form;
+  const tone = reqTone(r);
+  const isUrl = r.output && /^https?:\/\//i.test(r.output);
+  const outHtml = r.output
+    ? (isUrl ? `<div class="req-out-row"><a href="${esc(r.output)}" target="_blank" rel="noopener">${esc(r.output)}</a><button type="button" class="btn secondary inline" data-act="copyReqOut">Salin</button></div>` : esc(r.output))
+    : `<span class="muted">Belum ada</span>`;
+  const decisionBox = isLead() && r.status !== "done"
+    ? `<div class="req-act-box">
+        <h3>Keputusan Ray</h3>
+        <p class="hint">Hanya Approve yang membuat request tampil di laptop tim. Pending dan Reject bisa diubah kapan saja.</p>
+        <div class="req-decide-row" role="group" aria-label="Keputusan">
+          ${[["APPROVE", "Approve", "good"], ["PENDING", "Pending", "hold"], ["REJECT", "Reject", "rej"]].map(([d, lbl, cls]) => `<button type="button" class="req-dec-btn ${cls}" data-decide="${d}" aria-pressed="${r.decision === d}">${lbl}</button>`).join("")}
+        </div>
+        ${f.decide ? `<p class="msg info">Kolom G (Remark Creative) diubah jadi <b>${esc(f.decide)}</b>${f.decide === "APPROVE" ? " dan request tampil di laptop tim" : r.approved ? " dan request disembunyikan dari laptop tim" : ""}. Lanjut?</p>
+          <div class="row2"><button type="button" class="btn secondary" data-act="cancelDecide">Batal</button><button type="button" class="btn" data-act="doDecide" ${f.busy ? "disabled" : ""}>${f.busy ? "Menyimpan…" : "Ya, simpan"}</button></div>` : ""}
+      </div>`
+    : "";
+  const doneBox = r.status !== "done" && r.approved
+    ? `<div class="req-act-box">
+        <h3>Selesaikan request</h3>
+        <label for="outLink">Link output (Canva, Drive, dll)</label>
+        <input type="url" id="outLink" placeholder="https://" value="${esc(f.outLink || "")}">
+        ${f.confirm ? `<p class="msg info">Link masuk ke kolom Output dan PROGRESS di sheet diubah jadi DONE. Lanjut?</p>
+          <div class="row2"><button type="button" class="btn secondary" data-act="cancelDone">Batal</button><button type="button" class="btn" data-act="doDone" ${f.busy ? "disabled" : ""}>${f.busy ? "Menyimpan…" : "Ya, tandai selesai"}</button></div>`
+        : `<button type="button" class="btn" data-act="askDone">Tandai selesai</button>`}
+      </div>`
+    : "";
+  return `<div class="req-det ${tone}">
+    <div class="req-det-head">
+      <div class="req-det-who">
+        <span class="req-ini lg">${esc(reqInitials(r.user))}</span>
+        <div>
+          <div class="req-det-name"><b>${esc(r.user || "Tanpa nama")}</b>${statusPill(r)}</div>
+          <small>Masuk ${esc(r.submitted || "-")} · Baris ${esc(r.row || "-")}</small>
+        </div>
+      </div>
+      ${r.deadline ? `<div class="req-det-dl"><small>Deadline</small><b>${esc(r.deadline)}</b></div>` : ""}
+    </div>
+    <div class="req-brief">
+      <span class="req-brief-lbl">Detail permintaan</span>
+      <p>${esc(r.info)}</p>
+    </div>
+    <div class="req-facts">
+      <div class="req-fact"><small>Remark Creative</small><div>${esc(r.remark || "-")}</div></div>
+      <div class="req-fact"><small>Output</small><div>${outHtml}</div></div>
+    </div>
+    ${decisionBox}
+    ${doneBox}
+    ${f.msg ? `<p class="msg ${f.msgType}" role="status">${esc(f.msg)}</p>` : ""}
+  </div>`;
+}
+
+function bindRequestFull() {
+  bindCommon();
+  const s = $("reqSearch");
+  if (s) {
+    if (ui.reqFocusSearch) {
+      ui.reqFocusSearch = false;
+      s.focus();
+      const pos = s.value.length;
+      try { s.setSelectionRange(pos, pos); } catch {}
+    }
+    s.addEventListener("input", () => { ui.reqQuery = s.value; ui.reqFocusSearch = true; render(); });
+  }
+  document.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => {
+    ui.filter = b.dataset.filter; ui.form = {}; ui.openId = null; render();
+  }));
+  document.querySelectorAll(".req-card").forEach((b) => b.addEventListener("click", () => {
+    ui.openId = b.dataset.id; ui.form = {}; render();
+  }));
+  on("copyReqOut", () => {
+    const r = visibleRequests().find((x) => x.id === ui.openId);
+    if (r && r.output) { navigator.clipboard.writeText(r.output).catch(() => {}); setMsg("Link output disalin.", "ok"); }
+  });
+  bindDetail();
 }
 
 // ---------- Input KPI ----------
@@ -1213,40 +1405,234 @@ function bindEpDetail() {
 }
 
 // ----- Content Calendar -----
+const CAL_DAYS = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
+function calDefaultMonth(rows) {
+  if (ui.calMonth && /^\d{4}-\d{2}$/.test(ui.calMonth)) return ui.calMonth;
+  const freq = {};
+  for (const r of rows || []) {
+    if (r.date && /^\d{4}-\d{2}/.test(r.date)) {
+      const ym = r.date.slice(0, 7);
+      freq[ym] = (freq[ym] || 0) + 1;
+    }
+  }
+  const best = Object.entries(freq).sort((a, b) => b[1] - a[1] || b[0].localeCompare(a[0]))[0];
+  return best ? best[0] : todayISO().slice(0, 7);
+}
+function calShiftMonth(ym, delta) {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+}
+function calGridDates(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  const first = new Date(y, m - 1, 1);
+  const last = new Date(y, m, 0);
+  const startOff = (first.getDay() + 6) % 7;
+  const endOff = (7 - last.getDay()) % 7;
+  const start = new Date(y, m - 1, 1 - startOff);
+  const total = startOff + last.getDate() + endOff;
+  const out = [];
+  for (let i = 0; i < total; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    out.push(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+  }
+  return out;
+}
+function calCardTone(r, today) {
+  if (r.noPosting) return "off";
+  if (r.posting) return "posted";
+  if (r.date && r.date < today) return "late";
+  if (r.take || r.editing) return "prog";
+  return "plan";
+}
+function calAccTag(acc) {
+  const s = String(acc || "").trim().toUpperCase();
+  return s === "NUSANTARA" ? "NUS" : s.slice(0, 6);
+}
+function calOpenAdd(dateISO) {
+  const accounts = (ui.cal && ui.cal.accounts) || [];
+  const acc = accounts.includes(ui.calAcc) ? ui.calAcc : accounts[0] || "";
+  const o = (ui.cal && ui.cal.options) || {};
+  ui.form = { edit: { account: acc, date: dateISO || todayISO(), pillar: "", format: (o.formats || [])[0] || "", platform: (o.platforms || [])[0] || "", content: "", note: "", fa: "", link: "", take: false, editing: false, posting: false, noPosting: false } };
+  ui.view = "detail";
+  render();
+}
+function calListRowsHtml(rows, showAcc) {
+  let last = null;
+  return rows.map((r) => {
+    const head = r.date !== last ? `<li class="cal-date">${esc(fmtDate(r.date))}</li>` : "";
+    last = r.date;
+    const tag = showAcc ? `<span class="cal-acc-tag ${r.account === "NUSANTARA" ? "nus" : "aab"}">${esc(calAccTag(r.account))}</span> ` : "";
+    if (r.noPosting) return `${head}<li class="cal-row cal-off"><button class="cal-main" data-calrow="${esc(r.id)}"><span class="cal-title">${tag}NO POSTING</span></button></li>`;
+    return `${head}<li class="cal-row">
+      <button class="cal-main" data-calrow="${esc(r.id)}">
+        <span class="cal-title">${tag}${esc(r.content)}</span>
+        <span class="cal-meta">${esc([r.pillar.replace(/^\d+\.\s*/, ""), r.format, r.note].filter(Boolean).join(", "))}</span>
+      </button>
+      <div class="cal-checks" role="group" aria-label="Progres ${esc(r.content)}">
+        ${[["take", "Take"], ["editing", "Edit"], ["posting", "Post"]].map(([k, l]) => `<button data-tog="${esc(r.id)}" data-field="${k}" aria-pressed="${r[k]}" title="${k.toUpperCase()}">${l}</button>`).join("")}
+        ${r.link ? `<a href="${esc(r.link)}" target="_blank" rel="noopener" class="cal-link" aria-label="Buka link post">Link</a>` : ""}
+      </div>
+    </li>`;
+  }).join("");
+}
 function calListView() {
   const blocked = googleBlock("cal");
-  if (blocked) return blocked;
+  if (blocked) return isFull() ? `<div class="page-card">${blocked}</div>` : blocked;
   const accounts = ui.cal.accounts || [];
-  const acc = accounts.includes(ui.calAcc) ? ui.calAcc : accounts[0];
-  const all = ui.cal.rows.filter((r) => r.account === acc).sort((a, b) => (a.date || "9").localeCompare(b.date || "9") || a.row - b.row);
-  const filter = ui.calFilter || "week";
-  const rows = filter === "week" ? all.filter((r) => inWeek(r.date)) : filter === "todo" ? all.filter((r) => !r.noPosting && !r.posting) : all;
-  let last = null;
-  const body = rows
-    .map((r) => {
-      const head = r.date !== last ? `<li class="cal-date">${esc(fmtDate(r.date))}</li>` : "";
-      last = r.date;
-      if (r.noPosting) return `${head}<li class="cal-row cal-off"><button class="cal-main" data-calrow="${esc(r.id)}"><span class="cal-title">NO POSTING</span></button></li>`;
-      return `${head}<li class="cal-row">
-        <button class="cal-main" data-calrow="${esc(r.id)}">
-          <span class="cal-title">${esc(r.content)}</span>
-          <span class="cal-meta">${esc([r.pillar.replace(/^\d+\.\s*/, ""), r.format, r.note].filter(Boolean).join(", "))}</span>
-        </button>
-        <div class="cal-checks" role="group" aria-label="Progres ${esc(r.content)}">
-          ${[["take", "Take"], ["editing", "Edit"], ["posting", "Post"]].map(([k, l]) => `<button data-tog="${esc(r.id)}" data-field="${k}" aria-pressed="${r[k]}" title="${k.toUpperCase()}">${l}</button>`).join("")}
-          ${r.link ? `<a href="${esc(r.link)}" target="_blank" rel="noopener" class="cal-link" aria-label="Buka link post">Link</a>` : ""}
-        </div>
-      </li>`;
-    })
-    .join("");
-  return `<div class="list-head">${accountSeg(accounts, acc, "calacc")}
-      <a class="linklike" href="https://docs.google.com/spreadsheets/d/${esc(ui.cal.id)}/edit" target="_blank" rel="noopener">Buka Sheet</a></div>
-    <div class="filter" role="group" aria-label="Saring kalender">
-      ${[["week", "Minggu ini"], ["todo", "Belum posting"], ["all", "Semua"]].map(([k, l]) => `<button data-calf="${k}" aria-pressed="${filter === k}">${l}</button>`).join("")}
+  // Mode ringkas (widget kecil): tetap daftar vertikal.
+  if (!isFull()) {
+    const acc = accounts.includes(ui.calAcc) ? ui.calAcc : accounts[0];
+    const all = ui.cal.rows.filter((r) => r.account === acc).sort((a, b) => (a.date || "9").localeCompare(b.date || "9") || a.row - b.row);
+    const filter = ui.calFilter || "week";
+    const rows = filter === "week" ? all.filter((r) => inWeek(r.date)) : filter === "todo" ? all.filter((r) => !r.noPosting && !r.posting) : all;
+    return `<div class="list-head">${accountSeg(accounts, acc, "calacc")}
+        <a class="linklike" href="https://docs.google.com/spreadsheets/d/${esc(ui.cal.id)}/edit" target="_blank" rel="noopener">Buka Sheet</a></div>
+      <div class="filter" role="group" aria-label="Saring kalender">
+        ${[["week", "Minggu ini"], ["todo", "Belum posting"], ["all", "Semua"]].map(([k, l]) => `<button data-calf="${k}" aria-pressed="${filter === k}">${l}</button>`).join("")}
+      </div>
+      <div class="pad-x"><button class="btn" data-act="calAdd">+ Tambah ke kalender</button></div>
+      ${rows.length ? `<ul class="cal-list">${calListRowsHtml(rows, false)}</ul>` : `<p class="empty">Belum ada baris di filter ini.</p>`}
+      ${ui.form.msg ? `<p class="msg ${ui.form.msgType} pad-x" role="status">${esc(ui.form.msg)}</p>` : ""}`;
+  }
+
+  // Mode jendela penuh: kalender bulanan 7 kolom (default) + opsi Daftar.
+  const canAll = accounts.length > 1;
+  const acc = ui.calAcc === "ALL" && canAll ? "ALL" : accounts.includes(ui.calAcc) ? ui.calAcc : (canAll ? "ALL" : accounts[0]);
+  const mode = ui.calMode === "list" ? "list" : "month";
+  const all = ui.cal.rows
+    .filter((r) => acc === "ALL" || r.account === acc)
+    .sort((a, b) => (a.date || "9").localeCompare(b.date || "9") || a.row - b.row);
+  const ym = calDefaultMonth(all);
+  const today = todayISO();
+
+  const accTabs = `<div class="seg cal-seg" role="group" aria-label="Pilih akun">
+    ${canAll ? `<button type="button" data-calacc="ALL" aria-pressed="${acc === "ALL"}">Semua</button>` : ""}
+    ${accounts.map((a) => `<button type="button" data-calacc="${esc(a)}" aria-pressed="${acc === a}">${esc(a)}</button>`).join("")}
+  </div>`;
+
+  const topbar = `<div class="cal-topbar">
+    <div class="cal-top-l">
+      ${accTabs}
+      ${mode === "month" ? `<div class="cal-nav">
+        <button type="button" class="icon-btn" data-calnav="-1" aria-label="Bulan sebelumnya">‹</button>
+        <b class="cal-month-lbl">${esc(monthName(ym))}</b>
+        <button type="button" class="icon-btn" data-calnav="1" aria-label="Bulan berikutnya">›</button>
+        <button type="button" class="btn secondary inline cal-today-btn" data-act="calToday">Hari ini</button>
+      </div>` : ""}
     </div>
-    <div class="pad-x"><button class="btn" data-act="calAdd">+ Tambah ke kalender</button></div>
-    ${rows.length ? `<ul class="cal-list">${body}</ul>` : `<p class="empty">Belum ada baris di filter ini.</p>`}
-    ${ui.form.msg ? `<p class="msg ${ui.form.msgType} pad-x" role="status">${esc(ui.form.msg)}</p>` : ""}`;
+    <div class="cal-top-r">
+      <div class="seg cal-seg" role="tablist" aria-label="Mode kalender">
+        <button type="button" data-calmode="month" aria-pressed="${mode === "month"}">Kalender</button>
+        <button type="button" data-calmode="list" aria-pressed="${mode === "list"}">Daftar</button>
+      </div>
+      <a class="btn secondary inline cal-sheet-btn" href="https://docs.google.com/spreadsheets/d/${esc(ui.cal.id)}/edit" target="_blank" rel="noopener">Buka Sheet</a>
+      <button type="button" class="btn inline" data-act="calAdd">+ Tambah konten</button>
+    </div>
+  </div>`;
+
+  if (mode === "list") {
+    const filter = ui.calFilter || "week";
+    const rows = filter === "week" ? all.filter((r) => inWeek(r.date)) : filter === "todo" ? all.filter((r) => !r.noPosting && !r.posting) : all;
+    return `<div class="home cal-page">
+      ${topbar}
+      ${ui.form.msg ? `<p class="msg ${ui.form.msgType}" role="status">${esc(ui.form.msg)}</p>` : ""}
+      <section class="box glass">
+        <div class="filter cal-list-filter" role="group" aria-label="Saring kalender">
+          ${[["week", "Minggu ini"], ["todo", "Belum posting"], ["all", "Semua"]].map(([k, l]) => `<button data-calf="${k}" aria-pressed="${filter === k}">${l}</button>`).join("")}
+        </div>
+        ${rows.length ? `<ul class="cal-list">${calListRowsHtml(rows, acc === "ALL")}</ul>` : `<p class="empty">Belum ada baris di filter ini.</p>`}
+      </section>
+    </div>`;
+  }
+
+  // Hitung statistik bulan tampil + kelompokkan per tanggal
+  const byDate = {};
+  const undated = [];
+  let planned = 0, posted = 0, inProg = 0, late = 0, off = 0;
+  for (const r of all) {
+    if (!r.date) { undated.push(r); continue; }
+    (byDate[r.date] ||= []).push(r);
+    if (r.date.startsWith(ym)) {
+      if (r.noPosting) off++;
+      else {
+        planned++;
+        if (r.posting) posted++;
+        else if (r.date < today) late++;
+        else if (r.take || r.editing) inProg++;
+      }
+    }
+  }
+  const dates = calGridDates(ym);
+  const cellsHtml = dates.map((d, idx) => {
+    const out = !d.startsWith(ym);
+    const isToday = d === today;
+    const isFocus = d === ui.calFocusDay;
+    const wknd = idx % 7 >= 5;
+    const dayNum = +d.slice(8, 10);
+    const items = byDate[d] || [];
+    const cardsHtml = items.map((r) => {
+      const tone = calCardTone(r, today);
+      const accBadge = acc === "ALL" ? `<span class="cal-acc-tag ${r.account === "NUSANTARA" ? "nus" : "aab"}">${esc(calAccTag(r.account))}</span>` : "";
+      if (r.noPosting) {
+        return `<div class="cal-ev off"><button type="button" class="cal-ev-main" data-calrow="${esc(r.id)}" title="NO POSTING"><div class="cal-ev-top">${accBadge}<span class="cal-ev-off">NO POSTING</span></div></button></div>`;
+      }
+      const meta = [r.pillar ? r.pillar.replace(/^\d+\.\s*/, "") : "", r.format].filter(Boolean).join(" · ");
+      const tip = [r.content, meta, r.note].filter(Boolean).join(" | ");
+      return `<div class="cal-ev ${tone}">
+        <button type="button" class="cal-ev-main" data-calrow="${esc(r.id)}" title="${esc(tip)}">
+          ${accBadge || meta ? `<div class="cal-ev-top">${accBadge}${meta ? `<span class="cal-ev-meta">${esc(meta)}</span>` : ""}</div>` : ""}
+          <span class="cal-ev-title">${esc(r.content)}</span>
+          ${r.note ? `<span class="cal-ev-note">${esc(r.note)}</span>` : ""}
+        </button>
+        <div class="cal-ev-foot">
+          <div class="cal-ev-tep" role="group" aria-label="Progres ${esc(r.content)}">
+            ${[["take", "T", "Take"], ["editing", "E", "Editing"], ["posting", "P", "Posting"]].map(([k, ch, lbl]) => `<button type="button" data-tog="${esc(r.id)}" data-field="${k}" aria-pressed="${!!r[k]}" title="${lbl}">${ch}</button>`).join("")}
+          </div>
+          ${r.link ? `<a href="${esc(r.link)}" target="_blank" rel="noopener" class="cal-ev-link" title="Buka link post">↗</a>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+    return `<div class="cal-cell${out ? " out" : ""}${isToday ? " today" : ""}${isFocus ? " focus" : ""}${wknd ? " wknd" : ""}">
+      <div class="cal-cell-head">
+        <span class="cal-day-num">${dayNum}</span>
+        <button type="button" class="cal-day-add" data-caladd="${d}" title="Tambah konten tanggal ${esc(fmtDate(d))}" aria-label="Tambah konten tanggal ${dayNum}">+</button>
+      </div>
+      <div class="cal-cell-body">${cardsHtml}</div>
+    </div>`;
+  }).join("");
+
+  const legend = `<div class="cal-subbar">
+    <div class="cal-stats">
+      <span><b>${planned}</b> terjadwal</span>
+      <span class="good"><b>${posted}</b> posted</span>
+      ${inProg ? `<span class="prog"><b>${inProg}</b> proses</span>` : ""}
+      ${late ? `<span class="late"><b>${late}</b> lewat tanggal</span>` : ""}
+      ${off ? `<span><b>${off}</b> no posting</span>` : ""}
+    </div>
+    <div class="cal-legend">
+      <span><i class="dot posted"></i>Posted</span>
+      <span><i class="dot prog"></i>Take/Edit</span>
+      <span><i class="dot plan"></i>Rencana</span>
+      <span><i class="dot late"></i>Lewat</span>
+      <span><i class="dot off"></i>No posting</span>
+    </div>
+  </div>`;
+
+  const undatedBox = undated.length
+    ? `<section class="box glass"><h2>Belum ada tanggal <small>${undated.length} konten</small></h2><ul class="cal-list">${calListRowsHtml(undated, acc === "ALL")}</ul></section>`
+    : "";
+
+  return `<div class="home cal-page">
+    ${topbar}
+    ${legend}
+    ${ui.form.msg ? `<p class="msg ${ui.form.msgType}" role="status">${esc(ui.form.msg)}</p>` : ""}
+    <section class="cal-board glass">
+      <div class="cal-weekdays">${CAL_DAYS.map((d, i) => `<div class="cal-wd${i >= 5 ? " wknd" : ""}">${d}</div>`).join("")}</div>
+      <div class="cal-grid">${cellsHtml}</div>
+    </section>
+    ${undatedBox}
+  </div>`;
 }
 
 function bindCalList() {
@@ -1254,24 +1640,29 @@ function bindCalList() {
   on("gRetry", () => loadState());
   document.querySelectorAll("[data-calacc]").forEach((b) => b.addEventListener("click", () => { ui.calAcc = b.dataset.calacc; render(); }));
   document.querySelectorAll("[data-calf]").forEach((b) => b.addEventListener("click", () => { ui.calFilter = b.dataset.calf; render(); }));
-  on("calAdd", () => {
-    const acc = (ui.cal.accounts || []).includes(ui.calAcc) ? ui.calAcc : (ui.cal.accounts || [])[0];
-    const o = ui.cal.options || {};
-    ui.form = { edit: { account: acc, date: todayISO(), pillar: "", format: (o.formats || [])[0] || "", platform: (o.platforms || [])[0] || "", content: "", note: "", fa: "", link: "", take: false, editing: false, posting: false, noPosting: false } };
-    ui.view = "detail"; render();
-  });
+  document.querySelectorAll("[data-calmode]").forEach((b) => b.addEventListener("click", () => { ui.calMode = b.dataset.calmode; render(); }));
+  document.querySelectorAll("[data-calnav]").forEach((b) => b.addEventListener("click", () => {
+    const ym = calDefaultMonth((ui.cal && ui.cal.rows) || []);
+    ui.calMonth = calShiftMonth(ym, Number(b.dataset.calnav));
+    ui.calFocusDay = "";
+    render();
+  }));
+  on("calToday", () => { ui.calMonth = todayISO().slice(0, 7); ui.calFocusDay = todayISO(); render(); });
+  on("calAdd", () => calOpenAdd(todayISO()));
+  document.querySelectorAll("[data-caladd]").forEach((b) => b.addEventListener("click", () => calOpenAdd(b.dataset.caladd)));
   document.querySelectorAll("[data-calrow]").forEach((b) => b.addEventListener("click", () => {
     const r = ui.cal.rows.find((x) => x.id === b.dataset.calrow);
     if (!r) return;
     ui.form = { edit: { ...r } }; ui.view = "detail"; render();
   }));
-  document.querySelectorAll("[data-tog]").forEach((b) => b.addEventListener("click", async () => {
+  document.querySelectorAll("[data-tog]").forEach((b) => b.addEventListener("click", async (e) => {
+    e.stopPropagation();
     const value = b.getAttribute("aria-pressed") !== "true";
     b.setAttribute("aria-pressed", String(value)); b.disabled = true;
     try {
       const res = await api("/api/calendar/toggle", { id: b.dataset.tog, field: b.dataset.field, value });
       ui.cal = { ok: true, ...res.calendar }; ui.form = {};
-    } catch (e) { ui.form = { msg: e.message, msgType: "err" }; }
+    } catch (err) { ui.form = { msg: err.message, msgType: "err" }; }
     render();
   }));
 }
@@ -1331,7 +1722,8 @@ function bindCalForm() {
     try {
       const res = await api("/api/calendar/save", e);
       ui.cal = { ok: true, ...res.calendar };
-      ui.calAcc = e.account;
+      if (ui.calAcc !== "ALL") ui.calAcc = e.account;
+      if (e.date && /^\d{4}-\d{2}/.test(e.date)) { ui.calMonth = e.date.slice(0, 7); ui.calFocusDay = e.date; }
       ui.form = { msg: `${e.id ? "Baris diperbarui" : "Ditambahkan"} di baris ${res.row} tab ${e.account}.`, msgType: "ok" };
       ui.view = "list";
     } catch (err) { ui.form.busy = false; ui.form.msg = err.message; ui.form.msgType = "err"; }
@@ -1727,7 +2119,10 @@ function bindHome() {
   document.querySelectorAll("[data-todo]").forEach((b) => b.addEventListener("click", () => { const t = todo[+b.dataset.todo]; goPage(t.go[0], t.go[1]); }));
   document.querySelectorAll("[data-goep]").forEach((b) => b.addEventListener("click", () => goPage("ep", { epFilter: b.dataset.goep })));
   document.querySelectorAll("[data-epopen]").forEach((b) => b.addEventListener("click", () => { goPage("ep", { epOpen: b.dataset.epopen }); ui.view = "detail"; render(); }));
-  document.querySelectorAll("[data-goday]").forEach((b) => b.addEventListener("click", () => goPage("cal", { calFilter: "week" })));
+  document.querySelectorAll("[data-goday]").forEach((b) => b.addEventListener("click", () => {
+    const d = b.dataset.goday;
+    goPage("cal", { calMode: "month", calMonth: d.slice(0, 7), calFocusDay: d });
+  }));
 }
 
 // ---------- Personalisasi ----------

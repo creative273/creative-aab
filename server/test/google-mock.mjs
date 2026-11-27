@@ -19,14 +19,22 @@ putRange("'IDEA KONTEN'!B3:C3", [["KONTEN", "AKUN"]]);
 putRange("Settings!C12:C14", [["1. Functional"], ["2. Education"], ["3. Entertaintment"]]);
 putRange("Settings!G12:G15", [["Video"], ["Carousel"], ["News"], ["Feed"]]);
 putRange("Settings!K12:K12", [["Instagram"]]);
-putRange("'AAB NOVEMBER'!B4:M7", [
-  [1, "", "", "", "NO POSTING", "2026-11-22", "", "", "", false, false, false],
-  [2, "2. Education", "Video", "", "Modal Jadi Affiliator", "2026-11-25", "TAKE / REFLY", "", "", false, false, false],
-  [3, "3. Entertaintment", "Video", "", "POV Villain tapi Host Live", "2026-11-25", "", "", "", true, true, false],
-  [4, "2. Education", "Video", "", "Animasi 4 : Kunci Sukses Affiliator", "2026-11-23", "", "23/11 - Kunci", "https://www.instagram.com/reel/DgEx0gPBY-5/", true, true, true],
+putRange("'AAB NOVEMBER'!B4:M11", [
+  [1, "2. Education", "Video", "Instagram", "Kata Terlarang Pas Live", "2026-11-02", "", "02/11 - Kata", "https://www.instagram.com/p/Dcs1g0bvRp2/", true, true, true],
+  [2, "3. Entertaintment", "Carousel", "Instagram", "5 Kesalahan Host Baru", "2026-11-06", "", "", "https://www.instagram.com/p/demo2/", true, true, true],
+  [3, "1. Functional", "Video", "Instagram", "Cara Daftar Affiliate AAB", "2026-11-12", "", "", "https://www.instagram.com/reel/demo3/", true, true, true],
+  [4, "2. Education", "Video", "Instagram", "Animasi 4 : Kunci Sukses Affiliator", "2026-11-23", "", "23/11 - Kunci", "https://www.instagram.com/reel/DgEx0gPBY-5/", true, true, true],
+  [5, "", "", "", "NO POSTING", "2026-11-22", "", "", "", false, false, false],
+  [6, "2. Education", "Video", "Instagram", "Modal Jadi Affiliator", "2026-11-25", "TAKE / REFLY", "", "", false, false, false],
+  [7, "3. Entertaintment", "Video", "Instagram", "POV Villain tapi Host Live", "2026-11-27", "EDIT ALBAR", "", "", true, true, false],
+  [8, "1. Functional", "Carousel", "Instagram", "Checklist Persiapan Live 12.12", "2026-11-29", "DESIGN AQIL", "", "", true, false, false],
 ]);
-for (let r = 8; r <= 60; r++) { sheets["AAB NOVEMBER"]["B" + r] = r - 3; ["K", "L", "M"].forEach((c) => { sheets["AAB NOVEMBER"][c + r] = false; }); }
-putRange("'NUSANTARA NOVEMBER'!B4:M4", [[1, "2. Education", "Video", "", "Kode Produk Shopee", "2026-11-03", "", "", "", true, true, true]]);
+for (let r = 12; r <= 60; r++) { sheets["AAB NOVEMBER"]["B" + r] = r - 3; ["K", "L", "M"].forEach((c) => { sheets["AAB NOVEMBER"][c + r] = false; }); }
+putRange("'NUSANTARA NOVEMBER'!B4:M6", [
+  [1, "2. Education", "Video", "Instagram", "Kode Produk Shopee", "2026-11-03", "", "", "https://www.instagram.com/reel/demo-nus1/", true, true, true],
+  [2, "3. Entertaintment", "Video", "Instagram", "Behind The Scene Studio Live", "2026-11-18", "", "", "https://www.instagram.com/reel/demo-nus2/", true, true, true],
+  [3, "2. Education", "Video", "Instagram", "Tips Komisi Naik 2x Lipat", "2026-11-27", "TAKE SIANG", "", "", false, false, false],
+]);
 
 // ---- Slides tiruan ----
 const run = (content, style) => ({ textRun: { content, style: style || {} } });
