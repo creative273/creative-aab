@@ -182,7 +182,7 @@ Yang terjadi setelah terhubung:
    - Biarkan centang **Simpan snapshot bulan lalu** aktif agar angka bulan lalu tersimpan untuk pembanding MoM di Ringkasan dan arsip KPI.
    - Klik **Terapkan**. Semua laptop tim otomatis ikut pindah ke file bulan baru.
 
-(Pengaturan terpisah di **Pengaturan → Link sheet bulan ini** dan **Content Calendar dan EP** tetap tersedia kalau hanya ingin mengganti salah satu file.)
+(Kalau hanya ingin mengganti salah satu file, cukup isi kolom file yang berubah saja dan kosongkan yang lain.)
 
 ## Cara kerja per orang
 
